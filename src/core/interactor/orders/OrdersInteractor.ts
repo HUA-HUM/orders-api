@@ -306,8 +306,8 @@ export class OrdersInteractor {
       orderId: this.extractOrderId(order),
       createdAt: this.extractDate(order),
       amount: this.extractAmount(order),
-      customerName: this.extractCustomerName(customer),
-      latestStatus: this.extractLatestStatus(states),
+      customerName: this.extractCustomerName(order, customer),
+      latestStatus: this.extractLatestStatus(order, states),
       raw: rawOrder,
     };
   }
@@ -329,6 +329,8 @@ export class OrdersInteractor {
 
   private extractDate(order: Record<string, unknown>): string | null {
     const rawDate =
+      order.createdOn ??
+      order.purchaseDate ??
       order.Fecha ??
       order.fecha ??
       order.createdAt ??
@@ -356,8 +358,13 @@ export class OrdersInteractor {
   }
 
   private extractCustomerName(
+    order: Record<string, unknown>,
     customer: Record<string, unknown> | null,
   ): string | null {
+    if (typeof order.clientName === 'string' && order.clientName.trim()) {
+      return order.clientName.trim();
+    }
+
     if (!customer) {
       return null;
     }
@@ -371,7 +378,21 @@ export class OrdersInteractor {
     return fullName || null;
   }
 
-  private extractLatestStatus(states: unknown[]): string | null {
+  private extractLatestStatus(
+    order: Record<string, unknown>,
+    states: unknown[],
+  ): string | null {
+    if (typeof order.status === 'string' && order.status.trim()) {
+      if (
+        typeof order.deliveryStatus === 'string' &&
+        order.deliveryStatus.trim()
+      ) {
+        return `${order.status.trim()} - ${order.deliveryStatus.trim()}`;
+      }
+
+      return order.status.trim();
+    }
+
     if (states.length === 0) {
       return null;
     }

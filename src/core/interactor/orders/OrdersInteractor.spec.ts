@@ -150,4 +150,49 @@ describe('OrdersInteractor', () => {
       jest.useRealTimers();
     }
   });
+
+  it('maps fravega orders using createdOn and clientName', async () => {
+    megatoneRepository.getByDateRange.mockResolvedValueOnce([]);
+    oncityRepository.getByDateRange.mockResolvedValueOnce([]);
+    fravegaRepository.getByPage.mockResolvedValueOnce({
+      currentPage: 1,
+      items: [
+        {
+          orderId: 17951297,
+          suborderId: 'v88506252frvg-01',
+          purchaseDate: '2026-04-07T01:06:25.521Z',
+          clientName: 'Joaquin Gamondes',
+          amount: 735299,
+          status: 'Created',
+          createdOn: '2026-04-07T01:08:03.3756816+00:00',
+          deliveryStatus: 'Pending',
+        },
+      ],
+      pageSize: 100,
+      pages: 1,
+      scrollId: null,
+      total: 1,
+    });
+
+    jest.useFakeTimers().setSystemTime(new Date('2026-04-07T03:00:00.000Z'));
+
+    try {
+      const response = await interactor.getMarketplaceOrders('fravega', {
+        fechaDesde: '2026-04-07T00:00:00.000Z',
+        fechaHasta: '2026-04-07T23:59:59.999Z',
+      });
+
+      expect(response.total).toBe(1);
+      expect(response.items[0]).toMatchObject({
+        marketplace: 'fravega',
+        orderId: '17951297',
+        createdAt: '2026-04-07T01:08:03.375Z',
+        amount: 735299,
+        customerName: 'Joaquin Gamondes',
+        latestStatus: 'Created - Pending',
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
