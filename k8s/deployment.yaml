@@ -2,6 +2,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: order-api
+  labels:
+    app: order-api
+    app.kubernetes.io/name: order-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: order-api
 spec:
   replicas: 1
   selector:
@@ -11,10 +16,13 @@ spec:
     metadata:
       labels:
         app: order-api
+        app.kubernetes.io/name: order-api
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: order-api
     spec:
       containers:
         - name: order-api
-          image: arturogutierrez00/order-api:latest
+          image: <IMAGE>
           imagePullPolicy: Always
           ports:
             - containerPort: 3000

@@ -2,6 +2,11 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: order-api-ingress
+  labels:
+    app: order-api
+    app.kubernetes.io/name: order-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: order-api
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:

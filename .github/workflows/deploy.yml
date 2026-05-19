@@ -1,0 +1,72 @@
+name: Deploy order-api
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'k8s/**'
+      - 'Dockerfile'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    env:
+      APP_NAME: order-api
+      IMAGE_REPOSITORY: order-api
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        run: echo "IMAGE_TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Authenticate Docker against DOCR
+        run: doctl registries login ${{ secrets.DOCR_REGISTRY_NAME }} --expiry-seconds 1200
+
+      - name: Build and push image
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            -t registry.digitalocean.com/${{ secrets.DOCR_REGISTRY_NAME }}/${{ env.IMAGE_REPOSITORY }}:${{ env.IMAGE_TAG }} \
+            -t registry.digitalocean.com/${{ secrets.DOCR_REGISTRY_NAME }}/${{ env.IMAGE_REPOSITORY }}:latest \
+            --push \
+            .
+
+      - name: Save kubeconfig
+        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.DO_KUBERNETES_CLUSTER_NAME }}
+
+      - name: Integrate DOCR with cluster
+        run: doctl kubernetes cluster registry add ${{ secrets.DO_KUBERNETES_CLUSTER_NAME }}
+
+      - name: Render deployment image
+        run: |
+          IMAGE="registry.digitalocean.com/${{ secrets.DOCR_REGISTRY_NAME }}/${{ env.IMAGE_REPOSITORY }}:${{ env.IMAGE_TAG }}"
+          sed "s|<IMAGE>|${IMAGE}|g" k8s/deployment.yaml > /tmp/deployment.yaml
+
+      - name: Apply manifests
+        run: |
+          kubectl apply -f k8s/config.yaml
+          kubectl apply -f /tmp/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/ingress.yaml
+
+      - name: Verify rollout
+        run: kubectl rollout status deployment/${{ env.APP_NAME }} --timeout=180s

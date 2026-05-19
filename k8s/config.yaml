@@ -2,5 +2,10 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: order-api-config
+  labels:
+    app: order-api
+    app.kubernetes.io/name: order-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: order-api
 data:
   MARKETPLACE_API_BASE_URL: 'https://api.marketplace.loquieroaca.com'
