@@ -21,9 +21,11 @@ export interface OrdersQuery {
 export interface NormalizedOrder {
   marketplace: MarketplaceName;
   orderId: string;
+  suborderId?: string | null;
   createdAt: string | null;
   amount: number | null;
   customerName: string | null;
+  email?: string | null;
   latestStatus: string | null;
   raw: unknown;
 }
