@@ -121,6 +121,20 @@ describe('PersistMarketplaceOrders', () => {
     ]);
   });
 
+  it('does not pull oncity (excluded from the ingest flow)', async () => {
+    ordersInteractor.getMarketplaceOrders.mockImplementation(
+      (marketplace: MarketplaceName) => Promise.resolve(emptyResult(marketplace)),
+    );
+
+    await orchestrator.run();
+
+    const pulled = ordersInteractor.getMarketplaceOrders.mock.calls.map(
+      (call) => call[0],
+    );
+    expect(pulled).not.toContain('oncity');
+    expect(pulled).toEqual(expect.arrayContaining(['fravega', 'megatone']));
+  });
+
   it('a failing marketplace does not stop the others', async () => {
     ordersInteractor.getMarketplaceOrders.mockImplementation(
       (marketplace: MarketplaceName) => {

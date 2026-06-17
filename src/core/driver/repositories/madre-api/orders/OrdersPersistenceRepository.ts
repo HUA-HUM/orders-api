@@ -16,20 +16,49 @@ export class OrdersPersistenceRepository
   implements IOrdersPersistenceRepository
 {
   private static readonly BASE_PATH = '/api/orders';
+  private static readonly BATCH_CHUNK_SIZE = 25;
   private readonly logger = new Logger(OrdersPersistenceRepository.name);
 
   constructor(private readonly http: MadreHttpClient) {}
 
   async insert(orders: NormalizedOrder[]): Promise<InsertOrdersResponse> {
     const path = `${OrdersPersistenceRepository.BASE_PATH}/batch`;
-    const payload = { orders: orders.map(toNormalizedOrderRequest) };
+    const mapped = orders.map(toNormalizedOrderRequest);
+    const chunks = this.chunk(
+      mapped,
+      OrdersPersistenceRepository.BATCH_CHUNK_SIZE,
+    );
+
+    const result: InsertOrdersResponse = {
+      status: 'ok',
+      total: 0,
+      inserted: 0,
+      skipped: 0,
+    };
 
     try {
-      return await this.http.post<InsertOrdersResponse>(path, payload);
+      for (const batch of chunks) {
+        const response = await this.http.post<InsertOrdersResponse>(path, {
+          orders: batch,
+        });
+        result.total += response.total;
+        result.inserted += response.inserted;
+        result.skipped += response.skipped;
+      }
+
+      return result;
     } catch (error) {
       this.logError('insert', path, error);
       throw error;
     }
+  }
+
+  private chunk<T>(items: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < items.length; i += size) {
+      chunks.push(items.slice(i, i + size));
+    }
+    return chunks;
   }
 
   async findByUniqueKey(uniqueKey: string): Promise<FindOrderResponse> {

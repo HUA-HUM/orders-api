@@ -4,9 +4,14 @@ import type { IGetFravegaOrdersRepository } from '../../adapters/repositories/ma
 import { I_ORDERS_PERSISTENCE_REPOSITORY } from '../../adapters/repositories/madre/orders/IOrdersPersistenceRepository';
 import type { IOrdersPersistenceRepository } from '../../adapters/repositories/madre/orders/IOrdersPersistenceRepository';
 import type { FravegaOrderDetailResponse } from '../../entitis/marketplace-api/fravega/orders/GetFravegaOrderDetailResponse';
-import { SUPPORTED_MARKETPLACES } from '../../entitis/orders/Orders';
 import type { MarketplaceName, NormalizedOrder } from '../../entitis/orders/Orders';
 import { OrdersInteractor } from './OrdersInteractor';
+
+const INGEST_MARKETPLACES: readonly MarketplaceName[] = [
+  'fravega',
+  'megatone',
+  // 'oncity' — fuera del flujo de ingesta: MontoVenta sin factor de escala (I-1) y sin productos/documento (I-2). Reactivar al destrabarse.
+];
 
 export interface MarketplaceIngestResult {
   marketplace: MarketplaceName;
@@ -36,7 +41,7 @@ export class PersistMarketplaceOrders {
   async run(): Promise<IngestRunResult> {
     const window = this.resolveWindow();
     const settled = await Promise.allSettled(
-      SUPPORTED_MARKETPLACES.map((marketplace) =>
+      INGEST_MARKETPLACES.map((marketplace) =>
         this.ingestMarketplace(marketplace, window),
       ),
     );
@@ -45,7 +50,7 @@ export class PersistMarketplaceOrders {
     const errors: { marketplace: MarketplaceName; message: string }[] = [];
 
     settled.forEach((outcome, index) => {
-      const marketplace = SUPPORTED_MARKETPLACES[index];
+      const marketplace = INGEST_MARKETPLACES[index];
 
       if (outcome.status === 'fulfilled') {
         results.push(outcome.value);
