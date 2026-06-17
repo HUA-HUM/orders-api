@@ -9,3 +9,4 @@ metadata:
     app.kubernetes.io/part-of: order-api
 data:
   MARKETPLACE_API_BASE_URL: 'https://api.marketplace.loquieroaca.com'
+  MADRE_API_BASE_URL: 'https://api.madre.loquieroaca.com'
