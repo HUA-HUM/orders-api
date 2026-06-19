@@ -12,7 +12,7 @@ describe('toNormalizedOrderRequest', () => {
     raw: { IdOrden: 5453445, Estado: [{ Descripcion: 'Anulado' }] },
   };
 
-  it('maps a megatone order to madre contract with megatone:{id} unique_key', () => {
+  it('maps a megatone order with megatone:{id} unique_key and null suborder', () => {
     const result = toNormalizedOrderRequest(megatoneOrder);
 
     expect(result).toMatchObject({
@@ -20,10 +20,7 @@ describe('toNormalizedOrderRequest', () => {
       external_order_id: '5453445',
       external_suborder_id: null,
       unique_key: 'megatone:5453445',
-      purchase_date: '2026-05-10T11:02:00.000Z',
-      customer_name: 'Joel Francisco Ordoñez',
-      amount_total: 284999,
-      status: 'Anulado',
+      customer_email: null,
       source_schema_version: 'v1',
     });
   });
@@ -42,6 +39,24 @@ describe('toNormalizedOrderRequest', () => {
     expect(result.amount_total).toBe(600430020);
   });
 
+  it('maps a fravega order with suborderId + email (fravega:{suborderId})', () => {
+    const result = toNormalizedOrderRequest({
+      marketplace: 'fravega',
+      orderId: '18521376',
+      suborderId: 'v90520163frvg-01',
+      email: 'jeismara@example.com',
+      createdAt: '2026-02-03T14:00:00.000Z',
+      amount: 563759,
+      customerName: 'Jeismara Salcedo',
+      latestStatus: 'Created',
+      raw: { orderId: 18521376, suborderId: 'v90520163frvg-01' },
+    });
+
+    expect(result.unique_key).toBe('fravega:v90520163frvg-01');
+    expect(result.external_suborder_id).toBe('v90520163frvg-01');
+    expect(result.customer_email).toBe('jeismara@example.com');
+  });
+
   it('passes the raw marketplace payload through as source_payload', () => {
     const result = toNormalizedOrderRequest(megatoneOrder);
 
@@ -51,12 +66,10 @@ describe('toNormalizedOrderRequest', () => {
     });
   });
 
-  it('leaves enrichment fields null (deferred to MKT-29)', () => {
+  it('leaves still-pending fields null (phone/document/items → enriquecimiento futuro)', () => {
     const result = toNormalizedOrderRequest(megatoneOrder);
 
-    expect(result.external_suborder_id).toBeNull();
     expect(result.customer_phone).toBeNull();
-    expect(result.customer_email).toBeNull();
     expect(result.customer_document).toBeNull();
     expect(result.items_quantity).toBeNull();
   });

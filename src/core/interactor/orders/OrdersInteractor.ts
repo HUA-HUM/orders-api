@@ -304,6 +304,7 @@ export class OrdersInteractor {
     return {
       marketplace,
       orderId: this.extractOrderId(order),
+      suborderId: this.extractSuborderId(order),
       createdAt: this.extractDate(order),
       amount: this.extractAmount(order),
       customerName: this.extractCustomerName(order, customer),
@@ -325,6 +326,10 @@ export class OrdersInteractor {
     }
 
     return 'unknown';
+  }
+
+  private extractSuborderId(order: Record<string, unknown>): string | null {
+    return typeof order.suborderId === 'string' ? order.suborderId : null;
   }
 
   private extractDate(order: Record<string, unknown>): string | null {

@@ -6,7 +6,7 @@ const SOURCE_SCHEMA_VERSION = 'v1';
 export function toNormalizedOrderRequest(
   order: NormalizedOrder,
 ): NormalizedOrderRequest {
-  const externalSuborderId = null;
+  const externalSuborderId = order.suborderId ?? null;
   const uniqueKey = buildUniqueKey(
     order.marketplace,
     externalSuborderId,
@@ -22,7 +22,7 @@ export function toNormalizedOrderRequest(
     customer_name: order.customerName,
     customer_document: null,
     customer_phone: null,
-    customer_email: null,
+    customer_email: order.email ?? null,
     amount_total: order.amount,
     currency: null,
     status: order.latestStatus,

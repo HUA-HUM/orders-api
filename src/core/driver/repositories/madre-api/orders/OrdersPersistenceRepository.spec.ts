@@ -43,6 +43,32 @@ describe('OrdersPersistenceRepository', () => {
     expect(result.inserted).toBe(1);
   });
 
+  it('splits large batches into chunks so madre never gets an oversized body', async () => {
+    const orders: NormalizedOrder[] = Array.from({ length: 60 }, (_, i) => ({
+      ...order,
+      orderId: String(1000 + i),
+      raw: { IdOrden: 1000 + i },
+    }));
+    http.post.mockImplementation((_path: string, body: { orders: unknown[] }) =>
+      Promise.resolve({
+        status: 'ok',
+        total: body.orders.length,
+        inserted: body.orders.length,
+        skipped: 0,
+      }),
+    );
+
+    const result = await repository.insert(orders);
+
+    expect(http.post).toHaveBeenCalledTimes(3);
+    for (const call of http.post.mock.calls) {
+      expect(call[1].orders.length).toBeLessThanOrEqual(25);
+    }
+    expect(result.total).toBe(60);
+    expect(result.inserted).toBe(60);
+    expect(result.skipped).toBe(0);
+  });
+
   it('findByUniqueKey url-encodes the colon in the unique_key', async () => {
     http.get.mockResolvedValueOnce({ exists: false, order: null });
 
