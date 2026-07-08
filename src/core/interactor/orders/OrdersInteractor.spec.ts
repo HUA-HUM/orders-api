@@ -19,7 +19,8 @@ describe('OrdersInteractor', () => {
     };
 
     fravegaRepository = {
-      getByPage: jest.fn(),
+      listOrders: jest.fn(),
+      getOrder: jest.fn(),
     };
 
     interactor = new OrdersInteractor(
@@ -38,6 +39,16 @@ describe('OrdersInteractor', () => {
         Cliente: {
           Nombre: 'Pablo',
           Apellido: 'Sebastian Fernando Benitez',
+          Documento: 43722979,
+          NumeroCuit: '',
+          Email: 'pablo@example.com',
+          Telefono: '1138031908',
+          Calle: 'avenida paseo colon',
+          Numero: '746',
+          Piso: '2',
+          Localidad: 'Capital Federal',
+          Provincia: 'CAPITAL FEDERAL',
+          CodigoPostal: 1063,
         },
         Estado: [
           {
@@ -58,7 +69,18 @@ describe('OrdersInteractor', () => {
       marketplace: 'megatone',
       orderId: '500005',
       amount: 48402904,
-      customerName: 'Pablo Sebastian Fernando Benitez',
+      customer: {
+        name: 'Pablo Sebastian Fernando Benitez',
+        document: '43722979',
+        phone: '1138031908',
+        email: 'pablo@example.com',
+      },
+      shipping: {
+        address: 'avenida paseo colon 746 2',
+        city: 'Capital Federal',
+        province: 'CAPITAL FEDERAL',
+        zipCode: '1063',
+      },
       latestStatus: 'Cancelado',
     });
   });
@@ -85,19 +107,17 @@ describe('OrdersInteractor', () => {
       },
     ]);
 
-    fravegaRepository.getByPage.mockResolvedValueOnce({
-      currentPage: 1,
-      items: [
+    fravegaRepository.listOrders.mockResolvedValueOnce({
+      list: [
         {
-          id: 3,
-          createdAt: '2026-03-20T23:15:00.000Z',
-          amount: 300,
+          orderId: 'FVG-v90000003frvg-01',
+          marketPlaceOrderId: 'v90000003frvg-01',
+          creationDate: '2026-03-20T23:15:00.000Z',
+          clientName: 'Tester',
+          totalValue: 30000,
+          status: 'ready-for-handling',
         },
       ],
-      pageSize: 100,
-      pages: 1,
-      scrollId: null,
-      total: 1,
     });
 
     jest.useFakeTimers().setSystemTime(new Date('2026-03-21T22:45:22.570Z'));
@@ -129,14 +149,7 @@ describe('OrdersInteractor', () => {
     ]);
 
     oncityRepository.getByDateRange.mockResolvedValueOnce([]);
-    fravegaRepository.getByPage.mockResolvedValueOnce({
-      currentPage: 1,
-      items: [],
-      pageSize: 100,
-      pages: 1,
-      scrollId: null,
-      total: 0,
-    });
+    fravegaRepository.listOrders.mockResolvedValueOnce({ list: [] });
 
     jest.useFakeTimers().setSystemTime(new Date('2026-03-23T00:00:00.000Z'));
 
@@ -151,27 +164,21 @@ describe('OrdersInteractor', () => {
     }
   });
 
-  it('maps fravega orders using createdOn and clientName', async () => {
+  it('maps fravega vtex list orders (totalValue in cents, FVG- orderId)', async () => {
     megatoneRepository.getByDateRange.mockResolvedValueOnce([]);
     oncityRepository.getByDateRange.mockResolvedValueOnce([]);
-    fravegaRepository.getByPage.mockResolvedValueOnce({
-      currentPage: 1,
-      items: [
+    fravegaRepository.listOrders.mockResolvedValueOnce({
+      list: [
         {
-          orderId: 17951297,
-          suborderId: 'v88506252frvg-01',
-          purchaseDate: '2026-04-07T01:06:25.521Z',
+          orderId: 'FVG-v88506252frvg-01',
+          marketPlaceOrderId: 'v88506252frvg-01',
+          creationDate: '2026-04-07T01:08:03.3756816+00:00',
           clientName: 'Joaquin Gamondes',
-          amount: 735299,
-          status: 'Created',
-          createdOn: '2026-04-07T01:08:03.3756816+00:00',
-          deliveryStatus: 'Pending',
+          totalValue: 73529900,
+          status: 'ready-for-handling',
+          statusDescription: 'Listo para preparar',
         },
       ],
-      pageSize: 100,
-      pages: 1,
-      scrollId: null,
-      total: 1,
     });
 
     jest.useFakeTimers().setSystemTime(new Date('2026-04-07T03:00:00.000Z'));
@@ -185,11 +192,12 @@ describe('OrdersInteractor', () => {
       expect(response.total).toBe(1);
       expect(response.items[0]).toMatchObject({
         marketplace: 'fravega',
-        orderId: '17951297',
+        orderId: 'FVG-v88506252frvg-01',
+        suborderId: 'v88506252frvg-01',
         createdAt: '2026-04-07T01:08:03.375Z',
         amount: 735299,
-        customerName: 'Joaquin Gamondes',
-        latestStatus: 'Created - Pending',
+        customer: { name: 'Joaquin Gamondes' },
+        latestStatus: 'Listo para preparar',
       });
     } finally {
       jest.useRealTimers();

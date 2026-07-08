@@ -17,6 +17,7 @@ export interface NormalizedOrderRequest {
   shipping_city?: string | null;
   shipping_province?: string | null;
   shipping_zip_code?: string | null;
+  estimated_delivery_date?: string | null;
   source_payload: Record<string, unknown>;
   normalized_payload?: Record<string, unknown> | null;
   source_schema_version?: string | null;

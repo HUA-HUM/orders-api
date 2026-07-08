@@ -12,9 +12,7 @@ import { MadreHttpError } from '../http/errors/MadreHttpError';
 import { toNormalizedOrderRequest } from './mappers/toNormalizedOrderRequest';
 
 @Injectable()
-export class OrdersPersistenceRepository
-  implements IOrdersPersistenceRepository
-{
+export class OrdersPersistenceRepository implements IOrdersPersistenceRepository {
   private static readonly BASE_PATH = '/api/orders';
   private static readonly BATCH_CHUNK_SIZE = 25;
   private readonly logger = new Logger(OrdersPersistenceRepository.name);

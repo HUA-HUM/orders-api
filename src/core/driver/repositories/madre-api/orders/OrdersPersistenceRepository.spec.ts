@@ -1,6 +1,6 @@
 import { OrdersPersistenceRepository } from './OrdersPersistenceRepository';
 import type { MadreHttpClient } from '../http/MadreHttpClient';
-import type { NormalizedOrder } from '../../../../entitis/orders/Orders';
+import { emptyCustomer, emptyShipping, type NormalizedOrder } from '../../../../entitis/orders/Orders';
 
 describe('OrdersPersistenceRepository', () => {
   let http: { get: jest.Mock; post: jest.Mock; patch: jest.Mock };
@@ -11,8 +11,10 @@ describe('OrdersPersistenceRepository', () => {
     orderId: '5453445',
     createdAt: '2026-05-10T11:02:00.000Z',
     amount: 284999,
-    customerName: 'Joel Francisco Ordoñez',
     latestStatus: 'Anulado',
+    customer: { ...emptyCustomer(), name: 'Joel Francisco Ordoñez' },
+    shipping: emptyShipping(),
+    items: [],
     raw: { IdOrden: 5453445 },
   };
 
@@ -80,7 +82,9 @@ describe('OrdersPersistenceRepository', () => {
   it('updateStatus patches /api/orders/:id/status with the payload', async () => {
     http.patch.mockResolvedValueOnce({ status: 'ok' });
 
-    await repository.updateStatus(13, { persistence_status: 'PROCESSED_FLOXU' });
+    await repository.updateStatus(13, {
+      persistence_status: 'PROCESSED_FLOXU',
+    });
 
     expect(http.patch).toHaveBeenCalledWith('/api/orders/13/status', {
       persistence_status: 'PROCESSED_FLOXU',

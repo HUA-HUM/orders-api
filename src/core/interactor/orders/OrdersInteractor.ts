@@ -11,20 +11,28 @@ import { I_GET_ONCITY_ORDERS_REPOSITORY } from '../../adapters/repositories/mark
 import type { IGetFravegaOrdersRepository } from '../../adapters/repositories/marketplace/fravega/orders/IGetFravegaOrdersRepository';
 import type { IGetMegatoneOrdersRepository } from '../../adapters/repositories/marketplace/megatone/orders/IGetMegatoneOrdersRepository';
 import type { IGetOncityOrdersRepository } from '../../adapters/repositories/marketplace/oncity/orders/IGetOncityOrdersRepository';
-import type { FravegaOrderListItemResponse } from '../../entitis/marketplace-api/fravega/orders/GetFravegaOrdersResponse';
+import type { FravegaVtexOrderListItem } from '../../entitis/marketplace-api/fravega/orders/GetFravegaVtexOrdersResponse';
 import type { GetMegatoneOrdersResponse } from '../../entitis/marketplace-api/megatone/orders/GetMegatoneOrdersResponse';
 import type { GetOncityOrdersResponse } from '../../entitis/marketplace-api/oncity/orders/GetOncityOrdersResponse';
-import { SUPPORTED_MARKETPLACES } from '../../entitis/orders/Orders';
+import {
+  SUPPORTED_MARKETPLACES,
+  emptyCustomer,
+  emptyShipping,
+} from '../../entitis/orders/Orders';
 import type {
   MarketplaceErrorResponse,
   MarketplaceName,
   MarketplaceOrdersResponse,
   MarketplaceSummary,
   NormalizedOrder,
+  NormalizedOrderCustomer,
+  NormalizedOrderShipping,
   OrdersOverviewResponse,
   OrdersQuery,
   OrdersRange,
 } from '../../entitis/orders/Orders';
+import { extractMegatoneEnrichment } from './mappers/megatoneOrderEnrichment';
+import { mergeDefined, toIsoOrNull, trimOrNull } from './mappers/fieldHelpers';
 import { MarketplaceHttpError } from '../../driver/repositories/marketplace-api/http/errors/MarketplaceHttpError';
 
 class MarketplaceRequestError extends Error {
@@ -260,46 +268,76 @@ export class OrdersInteractor {
   private async fetchFravegaOrders(
     range: OrdersRange,
   ): Promise<NormalizedOrder[]> {
-    const items: NormalizedOrder[] = [];
+    const orders: NormalizedOrder[] = [];
 
     for (let page = 1; page <= OrdersInteractor.FRAVEGA_MAX_PAGES; page += 1) {
-      const response = await this.fravegaOrdersRepository.getByPage(
+      const response = await this.fravegaOrdersRepository.listOrders(
         page,
         OrdersInteractor.FRAVEGA_PAGE_SIZE,
       );
 
-      if (!Array.isArray(response.items)) {
-        throw new Error('Respuesta invalida de fravega: faltan items.');
+      const list = response?.list;
+      if (!Array.isArray(list)) {
+        throw new Error('Respuesta invalida de fravega vtex: falta list.');
       }
 
-      const normalizedPageItems = response.items
-        .map((order) => this.normalizeOrder('fravega', order))
-        .filter((order) => this.orderIsWithinRange(order, range));
+      if (list.length === 0) {
+        break;
+      }
 
-      items.push(...normalizedPageItems);
+      const mapped = list.map((item) => this.mapVtexListItem(item));
+      orders.push(
+        ...mapped.filter((order) => this.orderIsWithinRange(order, range)),
+      );
 
-      const reachedLastPage =
-        response.pages <= page ||
-        response.items.length < OrdersInteractor.FRAVEGA_PAGE_SIZE;
+      const oldest = mapped[mapped.length - 1];
+      const passedWindow =
+        oldest.createdAt !== null && oldest.createdAt < range.from;
+      const reachedLastPage = list.length < OrdersInteractor.FRAVEGA_PAGE_SIZE;
 
-      if (reachedLastPage) {
+      if (passedWindow || reachedLastPage) {
         break;
       }
     }
 
-    return items;
+    return orders;
+  }
+
+  private mapVtexListItem(item: FravegaVtexOrderListItem): NormalizedOrder {
+    return {
+      marketplace: 'fravega',
+      orderId: item.orderId,
+      suborderId:
+        typeof item.marketPlaceOrderId === 'string'
+          ? item.marketPlaceOrderId
+          : null,
+      createdAt: toIsoOrNull(item.creationDate),
+      amount:
+        typeof item.totalValue === 'number' ? item.totalValue / 100 : null,
+      latestStatus: item.statusDescription ?? item.status ?? null,
+      customer: { ...emptyCustomer(), name: trimOrNull(item.clientName) },
+      shipping: {
+        ...emptyShipping(),
+        estimatedDeliveryDate: toIsoOrNull(item.ShippingEstimatedDate),
+      },
+      items: [],
+      raw: item,
+    };
   }
 
   private normalizeOrder(
     marketplace: MarketplaceName,
-    rawOrder:
-      | GetMegatoneOrdersResponse
-      | GetOncityOrdersResponse
-      | FravegaOrderListItemResponse,
+    rawOrder: GetMegatoneOrdersResponse | GetOncityOrdersResponse,
   ): NormalizedOrder {
     const order = this.asRecord(rawOrder) ?? {};
     const customer = this.asRecord(order.Cliente);
     const states = this.asArray(order.Estado);
+
+    const baseCustomer: NormalizedOrderCustomer = {
+      ...emptyCustomer(),
+      name: this.extractCustomerName(order, customer),
+    };
+    const enrichment = this.enrichFromList(marketplace, rawOrder);
 
     return {
       marketplace,
@@ -307,10 +345,26 @@ export class OrdersInteractor {
       suborderId: this.extractSuborderId(order),
       createdAt: this.extractDate(order),
       amount: this.extractAmount(order),
-      customerName: this.extractCustomerName(order, customer),
       latestStatus: this.extractLatestStatus(order, states),
+      customer: mergeDefined(baseCustomer, enrichment.customer),
+      shipping: mergeDefined(emptyShipping(), enrichment.shipping),
+      items: [],
       raw: rawOrder,
     };
+  }
+
+  private enrichFromList(
+    marketplace: MarketplaceName,
+    rawOrder: GetMegatoneOrdersResponse | GetOncityOrdersResponse,
+  ): {
+    customer: Partial<NormalizedOrderCustomer>;
+    shipping: Partial<NormalizedOrderShipping>;
+  } {
+    if (marketplace === 'megatone') {
+      return extractMegatoneEnrichment(rawOrder as GetMegatoneOrdersResponse);
+    }
+
+    return { customer: {}, shipping: {} };
   }
 
   private extractOrderId(order: Record<string, unknown>): string {
