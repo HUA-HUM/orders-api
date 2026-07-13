@@ -1,25 +1,24 @@
 import { Controller, Post } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { PersistMarketplaceOrders } from '../../../core/interactor/orders/PersistMarketplaceOrders';
+import { DispatchOrders } from '../../../core/interactor/orders/DispatchOrders';
 
 @ApiTags('orders')
 @Controller('orders')
 export class OrdersSyncController {
-  constructor(
-    private readonly persistMarketplaceOrders: PersistMarketplaceOrders,
-  ) {}
+  constructor(private readonly dispatchOrders: DispatchOrders) {}
 
   @Cron('0 0 */2 * * *', { timeZone: 'America/Argentina/Buenos_Aires' })
   async handleCron() {
-    await this.persistMarketplaceOrders.run();
+    await this.dispatchOrders.run();
   }
 
   @Post('sync')
   @ApiOperation({
-    summary: 'Dispara manualmente la ingesta de órdenes hacia madre-api',
+    summary:
+      'Dispara manualmente el flujo de ordenes: Flokzu -> PowerApps -> persistencia',
   })
   async sync() {
-    return this.persistMarketplaceOrders.run();
+    return this.dispatchOrders.run();
   }
 }

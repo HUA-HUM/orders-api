@@ -13,6 +13,9 @@ export interface PersistedOrder extends NormalizedOrderRequest {
   notification_system_a_status: string | null;
   notification_system_b_status: string | null;
   floxu_code: string | null;
+  invoice_number: string | null;
+  invoice_url: string | null;
+  invoice_date: string | null;
   last_error: string | null;
   last_processed_at: string | null;
   created_at: string;
@@ -29,6 +32,9 @@ export interface UpdateOrderStatusRequest {
   notification_system_a_status?: string | null;
   notification_system_b_status?: string | null;
   floxu_code?: string | null;
+  invoice_number?: string | null;
+  invoice_url?: string | null;
+  invoice_date?: string | null;
   last_error?: string | null;
 }
 

@@ -19,23 +19,47 @@ export function toNormalizedOrderRequest(
     external_suborder_id: externalSuborderId,
     unique_key: uniqueKey,
     purchase_date: order.createdAt,
-    customer_name: order.customerName,
-    customer_document: null,
-    customer_phone: null,
-    customer_email: order.email ?? null,
+    customer_name: order.customer.name,
+    customer_document: order.customer.document,
+    customer_phone: order.customer.phone,
+    customer_email: order.customer.email,
     amount_total: order.amount,
     currency: null,
     status: order.latestStatus,
     delivery_status: null,
-    items_quantity: null,
-    shipping_address: null,
-    shipping_city: null,
-    shipping_province: null,
-    shipping_zip_code: null,
+    items_quantity: sumItemsQuantity(order),
+    shipping_address: order.shipping.address,
+    shipping_city: order.shipping.city,
+    shipping_province: order.shipping.province,
+    shipping_zip_code: order.shipping.zipCode,
+    estimated_delivery_date: order.shipping.estimatedDeliveryDate,
     source_payload: toSourcePayload(order.raw),
-    normalized_payload: null,
+    normalized_payload: buildNormalizedPayload(order),
     source_schema_version: SOURCE_SCHEMA_VERSION,
   };
+}
+
+function buildNormalizedPayload(
+  order: NormalizedOrder,
+): Record<string, unknown> {
+  return {
+    customer: order.customer,
+    shipping: order.shipping,
+    items: order.items,
+  };
+}
+
+function sumItemsQuantity(order: NormalizedOrder): number | null {
+  if (order.items.length === 0) {
+    return null;
+  }
+
+  const total = order.items.reduce(
+    (sum, item) => sum + (item.quantity ?? 0),
+    0,
+  );
+
+  return total > 0 ? total : null;
 }
 
 function buildUniqueKey(
