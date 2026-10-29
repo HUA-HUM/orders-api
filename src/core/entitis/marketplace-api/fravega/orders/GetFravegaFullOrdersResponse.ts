@@ -31,7 +31,12 @@ export interface FravegaFullOrderResponse {
   orderId: number;
   suborderId: string;
   vtexOrderId?: string;
-  status?: { sellerCentral?: string | null; vtex?: string | null };
+  status?: {
+    sellerCentral?: string | null;
+    // Estado de entrega de Seller Central (Pending, Delivered, Canceled...)
+    sellerCentralDelivery?: string | null;
+    vtex?: string | null;
+  };
   purchaseDate?: string | null;
   estimatedDeliveryDate?: string | null;
   buyer?: FravegaFullOrderBuyer;

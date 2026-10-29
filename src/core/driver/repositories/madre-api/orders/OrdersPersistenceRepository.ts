@@ -4,6 +4,7 @@ import type { NormalizedOrder } from '../../../../entitis/orders/Orders';
 import type {
   FindOrderResponse,
   InsertOrdersResponse,
+  PendingOrdersResponse,
   UpdateOrderStatusRequest,
   UpdateOrderStatusResponse,
 } from '../../../../entitis/madre-api/orders/OrdersPersistenceResponse';
@@ -66,6 +67,17 @@ export class OrdersPersistenceRepository implements IOrdersPersistenceRepository
       return await this.http.get<FindOrderResponse>(path);
     } catch (error) {
       this.logError('findByUniqueKey', path, error);
+      throw error;
+    }
+  }
+
+  async findPending(limit: number): Promise<PendingOrdersResponse> {
+    const path = `${OrdersPersistenceRepository.BASE_PATH}/pending`;
+
+    try {
+      return await this.http.get<PendingOrdersResponse>(path, { limit });
+    } catch (error) {
+      this.logError('findPending', path, error);
       throw error;
     }
   }

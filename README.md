@@ -21,14 +21,30 @@ POWERAPPS_API_URL=
 
 ### Flujo de ordenes (cron cada 2 horas o `POST /orders/sync`)
 
+`persistence_status` en madre sigue el estado de la orden en Fravega: `PENDING` mientras esta abierta,
+`COMPLETED` cuando se entrega o se cancela. El resultado de VBI va en `notification_system_b_status` y `floxu_code`.
+
 1. Trae las ordenes nuevas de Fravega desde marketplace-api (`/fravega/full-orders`), desde el ultimo sync.
 2. Las guarda en madre. Las que ya existen se saltean.
-3. Si falta el CUIL o el email del comprador queda `FAILED` con `last_error` `[MISSING_DATA] ...`.
-4. La envia a VBI: si responde OK queda `COMPLETED`, si no `FAILED` con `[VBI_ERROR] ...`.
-5. Las ordenes que marketplace-api no pudo completar (falla VTEX / Seller Central) quedan `FAILED` con `[SOURCE_ERROR] ...`.
+3. Si ya esta cancelada o devuelta en Fravega no se envia a VBI: queda `COMPLETED` con `last_error` `[CANCELLED] ...`.
+4. Si falta el CUIL o el email del comprador queda `FAILED` con `last_error` `[MISSING_DATA] ...`.
+5. La envia a VBI: si responde `status: "success"` queda `PENDING` (o `COMPLETED` si ya fue entregada),
+   con `notification_system_b_status: success` y el `tlqtNumber` en `floxu_code`. Si no, `FAILED` con `[VBI_ERROR] ...`.
+6. Las ordenes que marketplace-api no pudo completar (falla VTEX / Seller Central) quedan `FAILED` con `[SOURCE_ERROR] ...`.
 
 - `POST /orders/sync?from=...&to=...` reprocesa un rango de fechas de compra a mano.
 - `POST /orders/retry/{uniqueKey}` reintenta una orden `FAILED`.
+
+### Estados (cron cada hora a los :30 o `POST /orders/status-sync`)
+
+Recorre las ordenes `PENDING` de madre (`GET /api/orders/pending`), consulta cada una en Fravega y:
+
+- entregada (`Delivered`) → `COMPLETED`;
+- cancelada o devuelta (`Canceled` / `Returned` en Seller Central, o `canceled` en VTEX) → `COMPLETED`
+  con `last_error` `[CANCELLED] ...` (madre todavia no acepta `CANCELLED`);
+- el resto sigue `PENDING`. No avisa a VBI.
+
+Sync, retry y estados no corren en paralelo: si uno esta en curso, el otro responde 409 (o el cron se omite).
 
 ### Levantar en desarrollo
 

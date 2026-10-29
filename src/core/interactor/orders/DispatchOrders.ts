@@ -8,7 +8,10 @@ import type {
   IPowerAppsDispatchRepository,
   PowerAppsDispatchResult,
 } from '../../adapters/repositories/dispatch/powerapps/IPowerAppsDispatchRepository';
-import type { FravegaFullOrderError } from '../../entitis/marketplace-api/fravega/orders/GetFravegaFullOrdersResponse';
+import type {
+  FravegaFullOrderError,
+  FravegaFullOrderResponse,
+} from '../../entitis/marketplace-api/fravega/orders/GetFravegaFullOrdersResponse';
 import type { UpdateOrderStatusRequest } from '../../entitis/madre-api/orders/OrdersPersistenceResponse';
 import type { NormalizedOrder } from '../../entitis/orders/Orders';
 import {
@@ -17,6 +20,13 @@ import {
   findMissingDispatchFields,
 } from '../../entitis/orders/Orders';
 import { fravegaFullOrderToNormalized } from './mappers/fravegaFullOrderToNormalized';
+import {
+  closingStatusUpdate,
+  resolveFravegaLifecycle,
+} from './fravegaOrderLifecycle';
+import { OrdersProcessLock } from './OrdersProcessLock';
+
+export { DispatchInProgressError } from './OrdersProcessLock';
 
 type DispatchStage =
   | 'collect'
@@ -46,21 +56,20 @@ export interface DispatchRunResult {
   window: DispatchRange;
   collected: number;
   dispatched: number;
+  // Nuevas que ya estaban canceladas en Fravega: no se mandan a VBI
+  cancelled: number;
   skipped: number;
   failed: number;
   errors: DispatchError[];
 }
 
-export interface DispatchRetryResult {
-  uniqueKey: string;
-  persistence_status: 'COMPLETED' | 'FAILED';
+export interface DispatchOutcome {
+  persistence_status: 'PENDING' | 'COMPLETED' | 'FAILED';
   last_error: string | null;
 }
 
-export class DispatchInProgressError extends Error {
-  constructor() {
-    super('Ya hay un proceso de ordenes en curso');
-  }
+export interface DispatchRetryResult extends DispatchOutcome {
+  uniqueKey: string;
 }
 
 export class DispatchOrderNotFoundError extends Error {
@@ -79,7 +88,6 @@ export class DispatchOrders {
   private static readonly MAX_PAGES = 100;
   private readonly logger = new Logger(DispatchOrders.name);
 
-  private running = false;
   // Hasta donde llego el ultimo sync automatico completo. En memoria: tras un
   // reinicio se vuelve a mirar DEFAULT_LOOKBACK_HOURS y madre evita duplicados
   private lastSyncedUntil: Date | null = null;
@@ -91,6 +99,7 @@ export class DispatchOrders {
     private readonly powerAppsRepository: IPowerAppsDispatchRepository,
     @Inject(I_ORDERS_PERSISTENCE_REPOSITORY)
     private readonly ordersPersistenceRepository: IOrdersPersistenceRepository,
+    private readonly lock: OrdersProcessLock,
   ) {}
 
   /**
@@ -98,12 +107,13 @@ export class DispatchOrders {
    * Con rango: reprocesa ese periodo a mano (las que ya estan en madre se saltean).
    */
   async run(range?: DispatchRange): Promise<DispatchRunResult> {
-    return this.exclusive(async () => {
+    return this.lock.run(async () => {
       const window = range ?? this.resolveWindow();
       const result: DispatchRunResult = {
         window,
         collected: 0,
         dispatched: 0,
+        cancelled: 0,
         skipped: 0,
         failed: 0,
         errors: [],
@@ -128,15 +138,15 @@ export class DispatchOrders {
       }
 
       this.logger.log(
-        `[dispatch ${window.from} -> ${window.to}] collected=${result.collected} dispatched=${result.dispatched} skipped=${result.skipped} failed=${result.failed}`,
+        `[dispatch ${window.from} -> ${window.to}] collected=${result.collected} dispatched=${result.dispatched} cancelled=${result.cancelled} skipped=${result.skipped} failed=${result.failed}`,
       );
       return result;
     });
   }
 
-  /* Reintenta una orden FAILED: vuelve a consultarla en Fravega y la reenvia a VBI */
+  /* Reintenta una orden FAILED: vuelve a consultarla en Fravega y la reenvia a VBI si sigue vigente */
   async retry(uniqueKey: string): Promise<DispatchRetryResult> {
-    return this.exclusive(async () => {
+    return this.lock.run(async () => {
       const found =
         await this.ordersPersistenceRepository.findByUniqueKey(uniqueKey);
 
@@ -146,7 +156,7 @@ export class DispatchOrders {
 
       const persisted = found.order;
 
-      // COMPLETED ya esta en VBI y PENDING puede estar en curso: reenviarlas duplicaria la venta
+      // PENDING y COMPLETED ya pasaron por VBI (o estan cerradas): reenviarlas duplicaria la venta
       if (persisted.persistence_status !== 'FAILED') {
         throw new DispatchOrderNotRetryableError(
           `Solo se reintentan ordenes FAILED (estado actual: ${persisted.persistence_status})`,
@@ -163,14 +173,12 @@ export class DispatchOrders {
       }
 
       const result = this.emptyResult();
-      let order: NormalizedOrder;
+      let fullOrder: FravegaFullOrderResponse;
 
       try {
-        order = fravegaFullOrderToNormalized(
-          await this.fravegaOrdersRepository.getFullOrder(
-            persisted.external_suborder_id,
-            persisted.external_order_id,
-          ),
+        fullOrder = await this.fravegaOrdersRepository.getFullOrder(
+          persisted.external_suborder_id,
+          persisted.external_order_id,
         );
       } catch (error) {
         const lastError = await this.markFailed(
@@ -188,12 +196,8 @@ export class DispatchOrders {
         };
       }
 
-      const lastError = await this.process(order, persisted.id, result);
-      return {
-        uniqueKey,
-        persistence_status: lastError === null ? 'COMPLETED' : 'FAILED',
-        last_error: lastError,
-      };
+      const outcome = await this.process(fullOrder, persisted.id, result);
+      return { uniqueKey, ...outcome };
     });
   }
 
@@ -201,11 +205,11 @@ export class DispatchOrders {
     window: DispatchRange,
     result: DispatchRunResult,
   ): Promise<{
-    orders: NormalizedOrder[];
+    orders: FravegaFullOrderResponse[];
     sourceErrors: FravegaFullOrderError[];
     complete: boolean;
   }> {
-    const orders: NormalizedOrder[] = [];
+    const orders: FravegaFullOrderResponse[] = [];
     const sourceErrors: FravegaFullOrderError[] = [];
 
     try {
@@ -217,9 +221,7 @@ export class DispatchOrders {
           pageSize: DispatchOrders.PAGE_SIZE,
         });
 
-        orders.push(
-          ...(response.items ?? []).map(fravegaFullOrderToNormalized),
-        );
+        orders.push(...(response.items ?? []));
         sourceErrors.push(...(response.errors ?? []));
 
         // Fravega puede devolver paginas con menos items que pageSize aunque
@@ -242,9 +244,10 @@ export class DispatchOrders {
   }
 
   private async dispatchOne(
-    order: NormalizedOrder,
+    fullOrder: FravegaFullOrderResponse,
     result: DispatchRunResult,
   ): Promise<void> {
+    const order = fravegaFullOrderToNormalized(fullOrder);
     let id: number | null;
 
     try {
@@ -259,7 +262,7 @@ export class DispatchOrders {
       return;
     }
 
-    await this.process(order, id, result);
+    await this.process(fullOrder, id, result);
   }
 
   /* Ordenes que marketplace-api no pudo completar (fallo VTEX o Seller Central) */
@@ -307,22 +310,49 @@ export class DispatchOrders {
 
   /**
    * Valida y envia a VBI una orden que ya esta guardada en madre.
-   * Devuelve null si quedo COMPLETED o el last_error con que quedo FAILED.
+   * Si VBI la acepta queda PENDING hasta que Fravega la entregue o cancele
+   * (de eso se encarga SyncOrderStatuses), salvo que ya este entregada.
    */
   private async process(
-    order: NormalizedOrder,
+    fullOrder: FravegaFullOrderResponse,
     id: number,
     result: DispatchRunResult,
-  ): Promise<string | null> {
+  ): Promise<DispatchOutcome> {
+    const order = fravegaFullOrderToNormalized(fullOrder);
+    const lifecycle = resolveFravegaLifecycle(fullOrder);
+
+    // Una venta cancelada no se crea en VBI
+    const closing = closingStatusUpdate(lifecycle);
+    if (lifecycle.state === 'cancelled' && closing) {
+      try {
+        await this.ordersPersistenceRepository.updateStatus(id, closing);
+        result.cancelled += 1;
+      } catch (error) {
+        this.addError(
+          result,
+          order.orderId,
+          'persist',
+          `No se pudo marcar cancelada: ${this.msg(error)}`,
+        );
+        return { persistence_status: 'PENDING', last_error: null };
+      }
+      return {
+        persistence_status: 'COMPLETED',
+        last_error: closing.last_error ?? null,
+      };
+    }
+
     const missing = findMissingDispatchFields(order);
     if (missing.length > 0) {
-      return this.markFailed(
-        id,
-        order.orderId,
-        'MISSING_DATA',
-        `Faltan datos del comprador: ${missing.join(', ')}`,
-        'validate',
-        result,
+      return this.failed(
+        await this.markFailed(
+          id,
+          order.orderId,
+          'MISSING_DATA',
+          `Faltan datos del comprador: ${missing.join(', ')}`,
+          'validate',
+          result,
+        ),
       );
     }
 
@@ -330,32 +360,41 @@ export class DispatchOrders {
     try {
       sale = await this.powerAppsRepository.createSale(order);
     } catch (error) {
-      return this.markFailed(
-        id,
-        order.orderId,
-        'VBI_ERROR',
-        this.msg(error),
-        'powerapps',
-        result,
-        { notification_system_b_status: 'failed' },
+      return this.failed(
+        await this.markFailed(
+          id,
+          order.orderId,
+          'VBI_ERROR',
+          this.msg(error),
+          'powerapps',
+          result,
+          { notification_system_b_status: 'failed' },
+        ),
       );
     }
 
+    const persistenceStatus =
+      lifecycle.state === 'delivered' ? 'COMPLETED' : 'PENDING';
+
     try {
       await this.ordersPersistenceRepository.updateStatus(id, {
-        persistence_status: 'COMPLETED',
+        persistence_status: persistenceStatus,
         notification_system_b_status: 'success',
         floxu_code: sale.tlqtNumber,
         last_error: null,
       });
       result.dispatched += 1;
-      return null;
+      return { persistence_status: persistenceStatus, last_error: null };
     } catch (error) {
-      // Ya esta en VBI: queda PENDING en madre y no se reintenta solo
-      const message = `Enviada a VBI pero no se pudo marcar COMPLETED: ${this.msg(error)}`;
+      // Ya esta en VBI pero madre no lo sabe: no se reintenta solo para no duplicar la venta
+      const message = `Enviada a VBI (${sale.tlqtNumber ?? 'sin tlqtNumber'}) pero no se pudo guardar en madre: ${this.msg(error)}`;
       this.addError(result, order.orderId, 'persist', message);
-      return message;
+      return { persistence_status: 'PENDING', last_error: message };
     }
+  }
+
+  private failed(lastError: string): DispatchOutcome {
+    return { persistence_status: 'FAILED', last_error: lastError };
   }
 
   /* Guarda la orden en madre si no existe. Devuelve su id, o null si ya existia */
@@ -427,25 +466,13 @@ export class DispatchOrders {
     return `${order.marketplace}:${order.suborderId ?? order.orderId}`;
   }
 
-  private async exclusive<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.running) {
-      throw new DispatchInProgressError();
-    }
-
-    this.running = true;
-    try {
-      return await fn();
-    } finally {
-      this.running = false;
-    }
-  }
-
   private emptyResult(): DispatchRunResult {
     const now = new Date().toISOString();
     return {
       window: { from: now, to: now },
       collected: 0,
       dispatched: 0,
+      cancelled: 0,
       skipped: 0,
       failed: 0,
       errors: [],

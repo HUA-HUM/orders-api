@@ -27,6 +27,12 @@ export interface FindOrderResponse {
   order: PersistedOrder | null;
 }
 
+export interface PendingOrdersResponse {
+  limit: number;
+  count: number;
+  items: PersistedOrder[];
+}
+
 export interface UpdateOrderStatusRequest {
   persistence_status?: string;
   notification_system_a_status?: string | null;

@@ -13,6 +13,8 @@ import { OrdersPersistenceRepository } from '../../../core/driver/repositories/m
 import { PowerAppsDispatchRepository } from '../../../core/driver/repositories/dispatch/powerapps/PowerAppsDispatchRepository';
 import { OrdersInteractor } from '../../../core/interactor/orders/OrdersInteractor';
 import { DispatchOrders } from '../../../core/interactor/orders/DispatchOrders';
+import { OrdersProcessLock } from '../../../core/interactor/orders/OrdersProcessLock';
+import { SyncOrderStatuses } from '../../../core/interactor/orders/SyncOrderStatuses';
 import { OrdersController } from '../../controllers/orders/orders.controller';
 import { OrdersSyncController } from '../../controllers/orders/orders-sync.controller';
 import { OrdersService } from '../../services/orders/orders.service';
@@ -23,6 +25,8 @@ import { OrdersService } from '../../services/orders/orders.service';
     OrdersService,
     OrdersInteractor,
     DispatchOrders,
+    SyncOrderStatuses,
+    OrdersProcessLock,
     MarketplaceHttpClient,
     MadreHttpClient,
     {

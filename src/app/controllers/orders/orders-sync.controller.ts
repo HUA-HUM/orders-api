@@ -17,25 +17,27 @@ import {
   DispatchOrders,
 } from '../../../core/interactor/orders/DispatchOrders';
 import type { DispatchRange } from '../../../core/interactor/orders/DispatchOrders';
+import { SyncOrderStatuses } from '../../../core/interactor/orders/SyncOrderStatuses';
 
 @ApiTags('orders')
 @Controller('orders')
 export class OrdersSyncController {
   private readonly logger = new Logger(OrdersSyncController.name);
 
-  constructor(private readonly dispatchOrders: DispatchOrders) {}
+  constructor(
+    private readonly dispatchOrders: DispatchOrders,
+    private readonly syncOrderStatuses: SyncOrderStatuses,
+  ) {}
 
   @Cron('0 0 */2 * * *', { timeZone: 'America/Argentina/Buenos_Aires' })
   async handleCron() {
-    try {
-      await this.dispatchOrders.run();
-    } catch (error) {
-      if (error instanceof DispatchInProgressError) {
-        this.logger.warn('[cron] se omite: ya hay un proceso en curso');
-        return;
-      }
-      throw error;
-    }
+    await this.runFromCron('sync', () => this.dispatchOrders.run());
+  }
+
+  // A la media hora, para no chocar con el sync
+  @Cron('0 30 * * * *', { timeZone: 'America/Argentina/Buenos_Aires' })
+  async handleStatusCron() {
+    await this.runFromCron('status-sync', () => this.syncOrderStatuses.run());
   }
 
   @Post('sync')
@@ -65,10 +67,29 @@ export class OrdersSyncController {
     }
   }
 
+  @Post('status-sync')
+  @ApiOperation({
+    summary:
+      'Actualiza el estado de las ordenes PENDING de madre segun Fravega',
+    description:
+      'Las entregadas pasan a COMPLETED. Las canceladas o devueltas tambien quedan COMPLETED ' +
+      '(madre no acepta CANCELLED) con last_error "[CANCELLED] ...". No avisa a VBI.',
+  })
+  async statusSync() {
+    try {
+      return await this.syncOrderStatuses.run();
+    } catch (error) {
+      throw this.mapError(error);
+    }
+  }
+
   @Post('retry/:uniqueKey')
   @ApiOperation({
     summary:
       'Reintenta una orden FAILED: la vuelve a consultar y la reenvia a VBI',
+    description:
+      'Si VBI la acepta queda PENDING (o COMPLETED si ya fue entregada). ' +
+      'Si en Fravega ya esta cancelada no se envia a VBI.',
   })
   @ApiParam({ name: 'uniqueKey', example: 'fravega:v93713051frvg-01' })
   async retry(@Param('uniqueKey') uniqueKey: string) {
@@ -76,6 +97,21 @@ export class OrdersSyncController {
       return await this.dispatchOrders.retry(uniqueKey);
     } catch (error) {
       throw this.mapError(error);
+    }
+  }
+
+  private async runFromCron(
+    name: string,
+    fn: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await fn();
+    } catch (error) {
+      if (error instanceof DispatchInProgressError) {
+        this.logger.warn(`[cron ${name}] se omite: ya hay un proceso en curso`);
+        return;
+      }
+      throw error;
     }
   }
 
