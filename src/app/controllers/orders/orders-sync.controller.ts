@@ -31,13 +31,17 @@ export class OrdersSyncController {
 
   @Cron('0 0 */2 * * *', { timeZone: 'America/Argentina/Buenos_Aires' })
   async handleCron() {
-    await this.runFromCron('sync', () => this.dispatchOrders.run());
+    await this.runFromCron('sync', 'ORDERS_SYNC_CRON_ENABLED', () =>
+      this.dispatchOrders.run(),
+    );
   }
 
   // A la media hora, para no chocar con el sync
   @Cron('0 30 * * * *', { timeZone: 'America/Argentina/Buenos_Aires' })
   async handleStatusCron() {
-    await this.runFromCron('status-sync', () => this.syncOrderStatuses.run());
+    await this.runFromCron('status-sync', 'ORDERS_STATUS_CRON_ENABLED', () =>
+      this.syncOrderStatuses.run(),
+    );
   }
 
   @Post('sync')
@@ -102,8 +106,15 @@ export class OrdersSyncController {
 
   private async runFromCron(
     name: string,
+    enabledEnv: string,
     fn: () => Promise<unknown>,
   ): Promise<void> {
+    // Se lee en cada ejecucion: main.ts carga el .env despues de evaluar los @Cron
+    if (process.env[enabledEnv] === 'false') {
+      this.logger.debug(`[cron ${name}] deshabilitado (${enabledEnv}=false)`);
+      return;
+    }
+
     try {
       await fn();
     } catch (error) {

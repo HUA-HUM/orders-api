@@ -17,6 +17,9 @@ MADRE_API_BASE_URL=https://api.madre.loquieroaca.com
 # URL completa de VBI (Azure external-sale-create) con ?code=... No commitear el valor.
 # Vacia: el envio a VBI falla y las ordenes quedan FAILED [VBI_ERROR].
 POWERAPPS_API_URL=
+# false: no corre ese cron (los endpoints manuales siguen andando). Sin valor corren.
+ORDERS_SYNC_CRON_ENABLED=false
+ORDERS_STATUS_CRON_ENABLED=false
 ```
 
 ### Flujo de ordenes (cron cada 2 horas o `POST /orders/sync`)
@@ -75,6 +78,17 @@ docker compose up --build
 ## Kubernetes
 
 Los manifests viven en `k8s/`.
+
+`POWERAPPS_API_URL` lleva la clave de Azure (`?code=...`), asi que no va en `config.yaml` sino en el Secret
+`order-api-secrets`, que se crea una vez a mano en el cluster (no esta en el repo):
+
+```bash
+kubectl create secret generic order-api-secrets \
+  --from-literal=POWERAPPS_API_URL='https://...azurewebsites.net/api/external-sale-create?code=...'
+kubectl rollout restart deployment/order-api   # para que el pod tome el valor
+```
+
+Mientras no exista, el pod arranca igual pero el envio a VBI falla y las ordenes quedan `FAILED [VBI_ERROR]`.
 
 Aplicacion manual:
 
