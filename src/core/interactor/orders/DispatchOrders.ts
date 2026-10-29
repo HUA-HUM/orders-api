@@ -3,28 +3,35 @@ import { I_GET_FRAVEGA_ORDERS_REPOSITORY } from '../../adapters/repositories/mar
 import type { IGetFravegaOrdersRepository } from '../../adapters/repositories/marketplace/fravega/orders/IGetFravegaOrdersRepository';
 import { I_ORDERS_PERSISTENCE_REPOSITORY } from '../../adapters/repositories/madre/orders/IOrdersPersistenceRepository';
 import type { IOrdersPersistenceRepository } from '../../adapters/repositories/madre/orders/IOrdersPersistenceRepository';
-import { I_FLOKZU_DISPATCH_REPOSITORY } from '../../adapters/repositories/dispatch/flokzu/IFlokzuDispatchRepository';
-import type { IFlokzuDispatchRepository } from '../../adapters/repositories/dispatch/flokzu/IFlokzuDispatchRepository';
 import { I_POWERAPPS_DISPATCH_REPOSITORY } from '../../adapters/repositories/dispatch/powerapps/IPowerAppsDispatchRepository';
-import type { IPowerAppsDispatchRepository } from '../../adapters/repositories/dispatch/powerapps/IPowerAppsDispatchRepository';
 import type {
-  MarketplaceName,
-  NormalizedOrder,
+  IPowerAppsDispatchRepository,
+  PowerAppsDispatchResult,
+} from '../../adapters/repositories/dispatch/powerapps/IPowerAppsDispatchRepository';
+import type { FravegaFullOrderError } from '../../entitis/marketplace-api/fravega/orders/GetFravegaFullOrdersResponse';
+import type { UpdateOrderStatusRequest } from '../../entitis/madre-api/orders/OrdersPersistenceResponse';
+import type { NormalizedOrder } from '../../entitis/orders/Orders';
+import {
+  emptyCustomer,
+  emptyShipping,
+  findMissingDispatchFields,
 } from '../../entitis/orders/Orders';
-import { findMissingDispatchFields } from '../../entitis/orders/Orders';
-import { OrdersInteractor } from './OrdersInteractor';
-import { vtexOrderToNormalized } from './mappers/vtexOrderToNormalized';
-import { mergeDefined } from './mappers/fieldHelpers';
+import { fravegaFullOrderToNormalized } from './mappers/fravegaFullOrderToNormalized';
 
-const INGEST_MARKETPLACES: readonly MarketplaceName[] = [
-  'fravega',
-  // 'megatone',
-  // 'oncity',
-];
+type DispatchStage =
+  | 'collect'
+  | 'source'
+  | 'validate'
+  | 'powerapps'
+  | 'persist';
 
-type DispatchStage = 'collect' | 'flokzu' | 'powerapps' | 'persist';
+/* Motivo del FAILED: va como prefijo de last_error ([MISSING_DATA] ...) */
+export type DispatchFailureReason =
+  | 'SOURCE_ERROR'
+  | 'MISSING_DATA'
+  | 'VBI_ERROR';
 
-interface DispatchWindow {
+export interface DispatchRange {
   from: string;
   to: string;
 }
@@ -36,274 +43,428 @@ export interface DispatchError {
 }
 
 export interface DispatchRunResult {
-  window: DispatchWindow;
+  window: DispatchRange;
+  collected: number;
   dispatched: number;
   skipped: number;
   failed: number;
   errors: DispatchError[];
 }
 
+export interface DispatchRetryResult {
+  uniqueKey: string;
+  persistence_status: 'COMPLETED' | 'FAILED';
+  last_error: string | null;
+}
+
+export class DispatchInProgressError extends Error {
+  constructor() {
+    super('Ya hay un proceso de ordenes en curso');
+  }
+}
+
+export class DispatchOrderNotFoundError extends Error {
+  constructor(uniqueKey: string) {
+    super(`No existe la orden ${uniqueKey} en madre`);
+  }
+}
+
+export class DispatchOrderNotRetryableError extends Error {}
+
 @Injectable()
 export class DispatchOrders {
-  private static readonly WINDOW_HOURS = 3;
-  private static readonly LEGACY_PAGE_SIZE = 100;
-  private static readonly LEGACY_MAX_PAGES = 50;
+  private static readonly DEFAULT_LOOKBACK_HOURS = 24;
+  private static readonly OVERLAP_MINUTES = 30;
+  private static readonly PAGE_SIZE = 50;
+  private static readonly MAX_PAGES = 100;
   private readonly logger = new Logger(DispatchOrders.name);
 
+  private running = false;
+  // Hasta donde llego el ultimo sync automatico completo. En memoria: tras un
+  // reinicio se vuelve a mirar DEFAULT_LOOKBACK_HOURS y madre evita duplicados
+  private lastSyncedUntil: Date | null = null;
+
   constructor(
-    private readonly ordersInteractor: OrdersInteractor,
     @Inject(I_GET_FRAVEGA_ORDERS_REPOSITORY)
     private readonly fravegaOrdersRepository: IGetFravegaOrdersRepository,
-    @Inject(I_FLOKZU_DISPATCH_REPOSITORY)
-    private readonly flokzuRepository: IFlokzuDispatchRepository,
     @Inject(I_POWERAPPS_DISPATCH_REPOSITORY)
     private readonly powerAppsRepository: IPowerAppsDispatchRepository,
     @Inject(I_ORDERS_PERSISTENCE_REPOSITORY)
     private readonly ordersPersistenceRepository: IOrdersPersistenceRepository,
   ) {}
 
-  async run(): Promise<DispatchRunResult> {
-    const window = this.resolveWindow();
-    const result: DispatchRunResult = {
-      window,
-      dispatched: 0,
-      skipped: 0,
-      failed: 0,
-      errors: [],
-    };
+  /**
+   * Sin rango: procesa las ordenes nuevas desde el ultimo sync.
+   * Con rango: reprocesa ese periodo a mano (las que ya estan en madre se saltean).
+   */
+  async run(range?: DispatchRange): Promise<DispatchRunResult> {
+    return this.exclusive(async () => {
+      const window = range ?? this.resolveWindow();
+      const result: DispatchRunResult = {
+        window,
+        collected: 0,
+        dispatched: 0,
+        skipped: 0,
+        failed: 0,
+        errors: [],
+      };
 
-    const orders = await this.collect(window, result);
+      const { orders, sourceErrors, complete } = await this.collect(
+        window,
+        result,
+      );
+      result.collected = orders.length + sourceErrors.length;
 
-    for (const order of orders) {
-      await this.dispatchOne(order, result);
-    }
+      for (const order of orders) {
+        await this.dispatchOne(order, result);
+      }
 
-    this.logger.log(
-      `[dispatch] dispatched=${result.dispatched} skipped=${result.skipped} failed=${result.failed}`,
-    );
-    return result;
+      for (const sourceError of sourceErrors) {
+        await this.recordSourceError(sourceError, result);
+      }
+
+      if (!range && complete) {
+        this.lastSyncedUntil = new Date(window.to);
+      }
+
+      this.logger.log(
+        `[dispatch ${window.from} -> ${window.to}] collected=${result.collected} dispatched=${result.dispatched} skipped=${result.skipped} failed=${result.failed}`,
+      );
+      return result;
+    });
+  }
+
+  /* Reintenta una orden FAILED: vuelve a consultarla en Fravega y la reenvia a VBI */
+  async retry(uniqueKey: string): Promise<DispatchRetryResult> {
+    return this.exclusive(async () => {
+      const found =
+        await this.ordersPersistenceRepository.findByUniqueKey(uniqueKey);
+
+      if (!found.exists || !found.order) {
+        throw new DispatchOrderNotFoundError(uniqueKey);
+      }
+
+      const persisted = found.order;
+
+      // COMPLETED ya esta en VBI y PENDING puede estar en curso: reenviarlas duplicaria la venta
+      if (persisted.persistence_status !== 'FAILED') {
+        throw new DispatchOrderNotRetryableError(
+          `Solo se reintentan ordenes FAILED (estado actual: ${persisted.persistence_status})`,
+        );
+      }
+
+      if (
+        persisted.marketplace !== 'fravega' ||
+        !persisted.external_suborder_id
+      ) {
+        throw new DispatchOrderNotRetryableError(
+          `El reintento solo esta disponible para ordenes de fravega`,
+        );
+      }
+
+      const result = this.emptyResult();
+      let order: NormalizedOrder;
+
+      try {
+        order = fravegaFullOrderToNormalized(
+          await this.fravegaOrdersRepository.getFullOrder(
+            persisted.external_suborder_id,
+            persisted.external_order_id,
+          ),
+        );
+      } catch (error) {
+        const lastError = await this.markFailed(
+          persisted.id,
+          persisted.external_order_id,
+          'SOURCE_ERROR',
+          this.msg(error),
+          'source',
+          result,
+        );
+        return {
+          uniqueKey,
+          persistence_status: 'FAILED',
+          last_error: lastError,
+        };
+      }
+
+      const lastError = await this.process(order, persisted.id, result);
+      return {
+        uniqueKey,
+        persistence_status: lastError === null ? 'COMPLETED' : 'FAILED',
+        last_error: lastError,
+      };
+    });
   }
 
   private async collect(
-    window: DispatchWindow,
+    window: DispatchRange,
     result: DispatchRunResult,
-  ): Promise<NormalizedOrder[]> {
-    const settled = await Promise.allSettled(
-      INGEST_MARKETPLACES.map((marketplace) =>
-        this.collectMarketplace(marketplace, window),
-      ),
-    );
-
+  ): Promise<{
+    orders: NormalizedOrder[];
+    sourceErrors: FravegaFullOrderError[];
+    complete: boolean;
+  }> {
     const orders: NormalizedOrder[] = [];
-
-    settled.forEach((outcome, index) => {
-      const marketplace = INGEST_MARKETPLACES[index];
-
-      if (outcome.status === 'fulfilled') {
-        orders.push(...outcome.value);
-        return;
-      }
-
-      const message =
-        outcome.reason instanceof Error
-          ? outcome.reason.message
-          : 'collect error';
-      result.errors.push({
-        orderId: `(${marketplace})`,
-        stage: 'collect',
-        message,
-      });
-      this.logger.error(`[collect ${marketplace}] ${message}`);
-    });
-
-    return orders;
-  }
-
-  private async collectMarketplace(
-    marketplace: MarketplaceName,
-    window: DispatchWindow,
-  ): Promise<NormalizedOrder[]> {
-    const { items } = await this.ordersInteractor.getMarketplaceOrders(
-      marketplace,
-      { fechaDesde: window.from, fechaHasta: window.to },
-    );
-
-    if (marketplace !== 'fravega') {
-      return items;
-    }
-
-    const cuilBySuborderId = await this.buildCuilMap(window);
-
-    return Promise.all(
-      items.map((item) => this.enrichFravegaOrder(item, cuilBySuborderId)),
-    );
-  }
-
-  private async buildCuilMap(
-    window: DispatchWindow,
-  ): Promise<Map<string, string>> {
-    const cuilBySuborderId = new Map<string, string>();
+    const sourceErrors: FravegaFullOrderError[] = [];
 
     try {
-      for (let page = 1; page <= DispatchOrders.LEGACY_MAX_PAGES; page += 1) {
-        const response = await this.fravegaOrdersRepository.listLegacyOrders(
-          window.from,
-          window.to,
+      for (let page = 1; page <= DispatchOrders.MAX_PAGES; page += 1) {
+        const response = await this.fravegaOrdersRepository.listFullOrders({
+          from: window.from,
+          to: window.to,
           page,
-          DispatchOrders.LEGACY_PAGE_SIZE,
+          pageSize: DispatchOrders.PAGE_SIZE,
+        });
+
+        orders.push(
+          ...(response.items ?? []).map(fravegaFullOrderToNormalized),
         );
+        sourceErrors.push(...(response.errors ?? []));
 
-        const items = response?.items;
-        if (!Array.isArray(items) || items.length === 0) {
-          break;
-        }
-
-        for (const item of items) {
-          if (item.suborderId && item.cuil) {
-            cuilBySuborderId.set(item.suborderId, item.cuil);
-          }
-        }
-
-        if (items.length < DispatchOrders.LEGACY_PAGE_SIZE) {
-          break;
+        // Fravega puede devolver paginas con menos items que pageSize aunque
+        // haya mas: se corta por `pages`, no por el largo de la pagina
+        if (page >= response.pages) {
+          return { orders, sourceErrors, complete: true };
         }
       }
+
+      this.logger.warn(
+        `[collect fravega] se alcanzo el maximo de ${DispatchOrders.MAX_PAGES} paginas`,
+      );
     } catch (error) {
-      this.logger.warn(`[cuil map] ${this.msg(error)}`);
+      const message = this.msg(error);
+      result.errors.push({ orderId: '(fravega)', stage: 'collect', message });
+      this.logger.error(`[collect fravega] ${message}`);
     }
 
-    return cuilBySuborderId;
-  }
-
-  private async enrichFravegaOrder(
-    item: NormalizedOrder,
-    cuilBySuborderId: Map<string, string>,
-  ): Promise<NormalizedOrder> {
-    const cuil = item.suborderId
-      ? (cuilBySuborderId.get(item.suborderId) ?? null)
-      : null;
-
-    try {
-      const detail = await this.fravegaOrdersRepository.getOrder(item.orderId);
-      const enrichment = vtexOrderToNormalized(detail);
-      const customer = mergeDefined(item.customer, enrichment.customer);
-
-      return {
-        ...item,
-        customer: { ...customer, document: cuil ?? customer.document },
-        shipping: mergeDefined(item.shipping, enrichment.shipping),
-        items: enrichment.items.length > 0 ? enrichment.items : item.items,
-      };
-    } catch (error) {
-      this.logger.warn(`[enrich fravega] ${item.orderId}: ${this.msg(error)}`);
-      return {
-        ...item,
-        customer: {
-          ...item.customer,
-          document: cuil ?? item.customer.document,
-        },
-      };
-    }
+    return { orders, sourceErrors, complete: false };
   }
 
   private async dispatchOne(
     order: NormalizedOrder,
     result: DispatchRunResult,
   ): Promise<void> {
-    const uniqueKey = `${order.marketplace}:${order.suborderId ?? order.orderId}`;
+    let id: number | null;
 
+    try {
+      id = await this.insertIfNew(order);
+    } catch (error) {
+      this.addError(result, order.orderId, 'persist', this.msg(error));
+      return;
+    }
+
+    if (id === null) {
+      result.skipped += 1;
+      return;
+    }
+
+    await this.process(order, id, result);
+  }
+
+  /* Ordenes que marketplace-api no pudo completar (fallo VTEX o Seller Central) */
+  private async recordSourceError(
+    sourceError: FravegaFullOrderError,
+    result: DispatchRunResult,
+  ): Promise<void> {
+    const orderId = String(sourceError.orderId);
+    const order: NormalizedOrder = {
+      marketplace: 'fravega',
+      orderId,
+      suborderId: sourceError.suborderId,
+      createdAt: null,
+      amount: null,
+      latestStatus: null,
+      customer: emptyCustomer(),
+      shipping: emptyShipping(),
+      items: [],
+      raw: { sourceError },
+    };
+
+    let id: number | null;
+
+    try {
+      id = await this.insertIfNew(order);
+    } catch (error) {
+      this.addError(result, orderId, 'persist', this.msg(error));
+      return;
+    }
+
+    if (id === null) {
+      result.skipped += 1;
+      return;
+    }
+
+    await this.markFailed(
+      id,
+      orderId,
+      'SOURCE_ERROR',
+      `${sourceError.source}: ${sourceError.message}`,
+      'source',
+      result,
+    );
+  }
+
+  /**
+   * Valida y envia a VBI una orden que ya esta guardada en madre.
+   * Devuelve null si quedo COMPLETED o el last_error con que quedo FAILED.
+   */
+  private async process(
+    order: NormalizedOrder,
+    id: number,
+    result: DispatchRunResult,
+  ): Promise<string | null> {
     const missing = findMissingDispatchFields(order);
     if (missing.length > 0) {
-      this.logger.warn(
-        `[dispatch ${order.orderId}] datos faltantes: ${missing.join(', ')}`,
+      return this.markFailed(
+        id,
+        order.orderId,
+        'MISSING_DATA',
+        `Faltan datos del comprador: ${missing.join(', ')}`,
+        'validate',
+        result,
+      );
+    }
+
+    let sale: PowerAppsDispatchResult;
+    try {
+      sale = await this.powerAppsRepository.createSale(order);
+    } catch (error) {
+      return this.markFailed(
+        id,
+        order.orderId,
+        'VBI_ERROR',
+        this.msg(error),
+        'powerapps',
+        result,
+        { notification_system_b_status: 'failed' },
       );
     }
 
     try {
-      const existing =
-        await this.ordersPersistenceRepository.findByUniqueKey(uniqueKey);
-      if (existing.exists) {
-        result.skipped += 1;
-        return;
-      }
-    } catch (error) {
-      result.failed += 1;
-      result.errors.push({
-        orderId: order.orderId,
-        stage: 'persist',
-        message: this.msg(error),
+      await this.ordersPersistenceRepository.updateStatus(id, {
+        persistence_status: 'COMPLETED',
+        notification_system_b_status: 'success',
+        floxu_code: sale.tlqtNumber,
+        last_error: null,
       });
-      return;
-    }
-
-    let identifier: string;
-    try {
-      const flokzu = await this.flokzuRepository.createInstance(order);
-      identifier = flokzu.identifier;
-    } catch (error) {
-      result.failed += 1;
-      result.errors.push({
-        orderId: order.orderId,
-        stage: 'flokzu',
-        message: this.msg(error),
-      });
-      return;
-    }
-
-    try {
-      await this.powerAppsRepository.createSale(order, identifier);
-    } catch (error) {
-      result.failed += 1;
-      result.errors.push({
-        orderId: order.orderId,
-        stage: 'powerapps',
-        message: this.msg(error),
-      });
-      return;
-    }
-
-    try {
-      await this.persist(order, uniqueKey, identifier);
       result.dispatched += 1;
+      return null;
     } catch (error) {
-      result.failed += 1;
-      result.errors.push({
-        orderId: order.orderId,
-        stage: 'persist',
-        message: this.msg(error),
-      });
+      // Ya esta en VBI: queda PENDING en madre y no se reintenta solo
+      const message = `Enviada a VBI pero no se pudo marcar COMPLETED: ${this.msg(error)}`;
+      this.addError(result, order.orderId, 'persist', message);
+      return message;
     }
   }
 
-  private async persist(
-    order: NormalizedOrder,
-    uniqueKey: string,
-    identifier: string,
-  ): Promise<void> {
-    await this.ordersPersistenceRepository.insert([order]);
-
-    const found =
+  /* Guarda la orden en madre si no existe. Devuelve su id, o null si ya existia */
+  private async insertIfNew(order: NormalizedOrder): Promise<number | null> {
+    const uniqueKey = this.buildUniqueKey(order);
+    const existing =
       await this.ordersPersistenceRepository.findByUniqueKey(uniqueKey);
-    if (!found.exists || !found.order) {
-      throw new Error('No se encontro la orden recien insertada');
+
+    if (existing.exists) {
+      return null;
     }
 
-    await this.ordersPersistenceRepository.updateStatus(found.order.id, {
-      persistence_status: 'COMPLETED',
-      notification_system_a_status: 'OK',
-      notification_system_b_status: 'OK',
-      floxu_code: identifier,
-    });
+    await this.ordersPersistenceRepository.insert([order]);
+
+    // El batch de madre no devuelve ids
+    const inserted =
+      await this.ordersPersistenceRepository.findByUniqueKey(uniqueKey);
+    if (!inserted.exists || !inserted.order) {
+      throw new Error(`No se encontro la orden recien insertada ${uniqueKey}`);
+    }
+
+    return inserted.order.id;
+  }
+
+  private async markFailed(
+    id: number,
+    orderId: string,
+    reason: DispatchFailureReason,
+    message: string,
+    stage: DispatchStage,
+    result: DispatchRunResult,
+    extra: UpdateOrderStatusRequest = {},
+  ): Promise<string> {
+    const lastError = `[${reason}] ${message}`;
+    this.addError(result, orderId, stage, lastError);
+
+    try {
+      await this.ordersPersistenceRepository.updateStatus(id, {
+        ...extra,
+        persistence_status: 'FAILED',
+        last_error: lastError,
+      });
+    } catch (error) {
+      this.addError(
+        result,
+        orderId,
+        'persist',
+        `No se pudo marcar FAILED: ${this.msg(error)}`,
+        false,
+      );
+    }
+
+    return lastError;
+  }
+
+  private addError(
+    result: DispatchRunResult,
+    orderId: string,
+    stage: DispatchStage,
+    message: string,
+    countAsFailed = true,
+  ): void {
+    if (countAsFailed) result.failed += 1;
+    result.errors.push({ orderId, stage, message });
+    this.logger.warn(`[dispatch ${orderId}] ${stage}: ${message}`);
+  }
+
+  private buildUniqueKey(order: NormalizedOrder): string {
+    return `${order.marketplace}:${order.suborderId ?? order.orderId}`;
+  }
+
+  private async exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.running) {
+      throw new DispatchInProgressError();
+    }
+
+    this.running = true;
+    try {
+      return await fn();
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private emptyResult(): DispatchRunResult {
+    const now = new Date().toISOString();
+    return {
+      window: { from: now, to: now },
+      collected: 0,
+      dispatched: 0,
+      skipped: 0,
+      failed: 0,
+      errors: [],
+    };
   }
 
   private msg(error: unknown): string {
     return error instanceof Error ? error.message : 'error inesperado';
   }
 
-  private resolveWindow(): DispatchWindow {
+  private resolveWindow(): DispatchRange {
     const to = new Date();
+    const since =
+      this.lastSyncedUntil ??
+      new Date(
+        to.getTime() - DispatchOrders.DEFAULT_LOOKBACK_HOURS * 60 * 60 * 1000,
+      );
     const from = new Date(
-      to.getTime() - DispatchOrders.WINDOW_HOURS * 60 * 60 * 1000,
+      since.getTime() - DispatchOrders.OVERLAP_MINUTES * 60 * 1000,
     );
     return { from: from.toISOString(), to: to.toISOString() };
   }

@@ -27,6 +27,7 @@ export interface NormalizedOrderCustomer {
 
 export interface NormalizedOrderShipping {
   address: string | null;
+  receiverName?: string | null;
   city: string | null;
   province: string | null;
   zipCode: string | null;
@@ -46,6 +47,8 @@ export interface NormalizedOrder {
   suborderId?: string | null;
   createdAt: string | null;
   amount: number | null;
+  // Total de productos sin envio: es el PRECIOVENTA de VBI
+  productsAmount?: number | null;
   latestStatus: string | null;
   customer: NormalizedOrderCustomer;
   shipping: NormalizedOrderShipping;
@@ -69,12 +72,18 @@ export function emptyShipping(): NormalizedOrderShipping {
 
 export const REQUIRED_DISPATCH_FIELDS = [
   'document',
-  'phone',
   'email',
 ] as const satisfies readonly (keyof NormalizedOrderCustomer)[];
 
+// VTEX enmascara el email del comprador: no sirve para VBI
+const MASKED_EMAIL_DOMAIN = '@ct.vtex.com.br';
+
 export function findMissingDispatchFields(order: NormalizedOrder): string[] {
-  return REQUIRED_DISPATCH_FIELDS.filter((field) => !order.customer[field]);
+  return REQUIRED_DISPATCH_FIELDS.filter((field) => {
+    const value = order.customer[field];
+    if (!value) return true;
+    return field === 'email' && value.endsWith(MASKED_EMAIL_DOMAIN);
+  });
 }
 
 export interface MarketplaceOrdersResponse {

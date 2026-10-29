@@ -1,5 +1,9 @@
 import type { NormalizedOrder } from '../../../entitis/orders/Orders';
-import { formatDateDmy } from './fieldHelpers';
+import {
+  formatDateDmy,
+  formatDateDmyArgentina,
+  joinParts,
+} from './fieldHelpers';
 
 export function toPowerAppsPayload(
   order: NormalizedOrder,
@@ -9,7 +13,8 @@ export function toPowerAppsPayload(
 
   return {
     NROVENTA: order.orderId,
-    FECHAVENTA: formatDateDmy(order.createdAt),
+    FECHAVENTA: formatDateDmyArgentina(order.createdAt),
+    // Fravega manda la fecha de entrega sin hora (00:00 UTC): en hora argentina caeria un dia antes
     FECHAENTREGA: formatDateDmy(order.shipping.estimatedDeliveryDate),
     LINKAMAZON: sku ? `https://www.amazon.com/dp/${sku}` : '',
     SKU: sku,
@@ -17,10 +22,11 @@ export function toPowerAppsPayload(
     ESTADO: order.latestStatus ?? '',
     'Cantidad de Unidades': item?.quantity ?? '',
     TIPOVENTA: order.marketplace.toUpperCase(),
-    PRECIOVENTA: order.amount ?? '',
+    PRECIOVENTA: order.productsAmount ?? order.amount ?? '',
     CUITCOMPRADOR: order.customer.document ?? '',
     NOMBREDESTINATARIO: order.customer.name ?? '',
-    'Datos Cliente': order.shipping.address ?? '',
+    'Datos Cliente':
+      joinParts(order.shipping.address, order.shipping.receiverName) ?? '',
     TELEFONO: order.customer.phone ?? '',
     EMAIL: order.customer.email ?? '',
     CIUDAD: order.shipping.city ?? '',
