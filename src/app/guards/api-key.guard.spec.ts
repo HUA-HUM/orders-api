@@ -3,17 +3,30 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { ExecutionContext } from '@nestjs/common';
-import { ApiKeyGuard } from './api-key.guard';
+import { Reflector } from '@nestjs/core';
+import { ApiKeyGuard, Public } from './api-key.guard';
 
 describe('ApiKeyGuard', () => {
   const originalApiKey = process.env.API_KEY;
-  const guard = new ApiKeyGuard();
+  const guard = new ApiKeyGuard(new Reflector());
+
+  class ProtectedController {
+    handle(this: void): void {}
+  }
+
+  @Public()
+  class PublicController {
+    handle(this: void): void {}
+  }
 
   const withHeaders = (
     headers: Record<string, string | string[]>,
+    controller: typeof ProtectedController = ProtectedController,
   ): ExecutionContext =>
     ({
       switchToHttp: () => ({ getRequest: () => ({ headers }) }),
+      getHandler: () => controller.prototype.handle,
+      getClass: () => controller,
     }) as unknown as ExecutionContext;
 
   beforeEach(() => {
@@ -41,6 +54,12 @@ describe('ApiKeyGuard', () => {
     expect(() => guard.canActivate(withHeaders(headers))).toThrow(
       UnauthorizedException,
     );
+  });
+
+  it('lets a @Public() controller through without key, even without API_KEY configured', () => {
+    delete process.env.API_KEY;
+
+    expect(guard.canActivate(withHeaders({}, PublicController))).toBe(true);
   });
 
   it('rejects everything when API_KEY is not configured', () => {

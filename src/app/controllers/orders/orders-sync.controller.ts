@@ -7,7 +7,13 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiSecurity,
+  ApiTags,
+} from '@nestjs/swagger';
 import {
   DispatchInProgressError,
   DispatchOrderNotFoundError,
@@ -16,9 +22,11 @@ import {
 } from '../../../core/interactor/orders/DispatchOrders';
 import type { DispatchRange } from '../../../core/interactor/orders/DispatchOrders';
 import { SyncOrderStatuses } from '../../../core/interactor/orders/SyncOrderStatuses';
+import { API_KEY_SECURITY } from '../../guards/api-key.guard';
 
 // Procesos de Frávega: cada marketplace que se sume tendra sus propias rutas
 @ApiTags('orders')
+@ApiSecurity(API_KEY_SECURITY)
 @Controller('orders/fravega')
 export class OrdersSyncController {
   constructor(
