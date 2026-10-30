@@ -2,14 +2,21 @@ import {
   BadRequestException,
   ConflictException,
   Controller,
-  Logger,
   NotFoundException,
   Param,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
-import { ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiSecurity,
+  ApiTags,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger';
+import { API_KEY_SECURITY, ApiKeyGuard } from '../../guards/api-key.guard';
 import {
   DispatchInProgressError,
   DispatchOrderNotFoundError,
@@ -19,30 +26,20 @@ import {
 import type { DispatchRange } from '../../../core/interactor/orders/DispatchOrders';
 import { SyncOrderStatuses } from '../../../core/interactor/orders/SyncOrderStatuses';
 
+// Disparan procesos y envios a VBI: requieren x-api-key. Los GET de orders.controller
+// siguen abiertos porque panel.market los consume sin key.
 @ApiTags('orders')
+@ApiSecurity(API_KEY_SECURITY)
+@ApiUnauthorizedResponse({
+  description: 'Falta el header x-api-key o no coincide con API_KEY',
+})
+@UseGuards(ApiKeyGuard)
 @Controller('orders')
 export class OrdersSyncController {
-  private readonly logger = new Logger(OrdersSyncController.name);
-
   constructor(
     private readonly dispatchOrders: DispatchOrders,
     private readonly syncOrderStatuses: SyncOrderStatuses,
   ) {}
-
-  @Cron('0 0 */2 * * *', { timeZone: 'America/Argentina/Buenos_Aires' })
-  async handleCron() {
-    await this.runFromCron('sync', 'ORDERS_SYNC_CRON_ENABLED', () =>
-      this.dispatchOrders.run(),
-    );
-  }
-
-  // A la media hora, para no chocar con el sync
-  @Cron('0 30 * * * *', { timeZone: 'America/Argentina/Buenos_Aires' })
-  async handleStatusCron() {
-    await this.runFromCron('status-sync', 'ORDERS_STATUS_CRON_ENABLED', () =>
-      this.syncOrderStatuses.run(),
-    );
-  }
 
   @Post('sync')
   @ApiOperation({
@@ -101,28 +98,6 @@ export class OrdersSyncController {
       return await this.dispatchOrders.retry(uniqueKey);
     } catch (error) {
       throw this.mapError(error);
-    }
-  }
-
-  private async runFromCron(
-    name: string,
-    enabledEnv: string,
-    fn: () => Promise<unknown>,
-  ): Promise<void> {
-    // Se lee en cada ejecucion: main.ts carga el .env despues de evaluar los @Cron
-    if (process.env[enabledEnv] === 'false') {
-      this.logger.debug(`[cron ${name}] deshabilitado (${enabledEnv}=false)`);
-      return;
-    }
-
-    try {
-      await fn();
-    } catch (error) {
-      if (error instanceof DispatchInProgressError) {
-        this.logger.warn(`[cron ${name}] se omite: ya hay un proceso en curso`);
-        return;
-      }
-      throw error;
     }
   }
 

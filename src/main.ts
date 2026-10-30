@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app/modules/app.module';
+import { API_KEY_HEADER, API_KEY_SECURITY } from './app/guards/api-key.guard';
 
 function loadEnvFile(): void {
   const envPath = resolve(process.cwd(), '.env');
@@ -44,6 +45,16 @@ async function bootstrap() {
       'API para consultar órdenes de marketplaces y overviews agregados.',
     )
     .setVersion('1.0.0')
+    .addApiKey(
+      {
+        type: 'apiKey',
+        name: API_KEY_HEADER,
+        in: 'header',
+        description:
+          'API key para los endpoints que disparan procesos (sync, status-sync, retry)',
+      },
+      API_KEY_SECURITY,
+    )
     .build();
   const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
 

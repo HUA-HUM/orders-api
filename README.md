@@ -17,12 +17,22 @@ MADRE_API_BASE_URL=https://api.madre.loquieroaca.com
 # URL completa de VBI (Azure external-sale-create) con ?code=... No commitear el valor.
 # Vacia: el envio a VBI falla y las ordenes quedan FAILED [VBI_ERROR].
 POWERAPPS_API_URL=
+# Crons (hora de Argentina). Expresion con segundos: "seg min hora dia mes diaSemana".
+# Sin valor usan el horario por defecto; si la expresion es invalida se loguea un error y tambien.
+# Los comentarios van en su propia linea: el .env no admite comentarios al final del valor.
+# Por defecto: cada 2 horas en punto
+ORDERS_SYNC_CRON=0 0 */2 * * *
+# Por defecto: cada hora a los :30
+ORDERS_STATUS_CRON=0 30 * * * *
+# Header x-api-key que exigen POST /orders/sync, /orders/status-sync y /orders/retry.
+# Sin valor esos endpoints responden 500 (se rechaza todo). Los GET no la piden.
+API_KEY=
 # false: no corre ese cron (los endpoints manuales siguen andando). Sin valor corren.
 ORDERS_SYNC_CRON_ENABLED=false
 ORDERS_STATUS_CRON_ENABLED=false
 ```
 
-### Flujo de ordenes (cron cada 2 horas o `POST /orders/sync`)
+### Flujo de ordenes (cron `ORDERS_SYNC_CRON`, por defecto cada 2 horas, o `POST /orders/sync`)
 
 `persistence_status` en madre sigue el estado de la orden en Fravega: `PENDING` mientras esta abierta,
 `COMPLETED` cuando se entrega o se cancela. El resultado de VBI va en `notification_system_b_status` y `floxu_code`.
@@ -38,7 +48,7 @@ ORDERS_STATUS_CRON_ENABLED=false
 - `POST /orders/sync?from=...&to=...` reprocesa un rango de fechas de compra a mano.
 - `POST /orders/retry/{uniqueKey}` reintenta una orden `FAILED`.
 
-### Estados (cron cada hora a los :30 o `POST /orders/status-sync`)
+### Estados (cron `ORDERS_STATUS_CRON`, por defecto cada hora a los :30, o `POST /orders/status-sync`)
 
 Recorre las ordenes `PENDING` de madre (`GET /api/orders/pending`), consulta cada una en Fravega y:
 
@@ -79,16 +89,18 @@ docker compose up --build
 
 Los manifests viven en `k8s/`.
 
-`POWERAPPS_API_URL` lleva la clave de Azure (`?code=...`), asi que no va en `config.yaml` sino en el Secret
+`POWERAPPS_API_URL` (lleva la clave de Azure, `?code=...`) y `API_KEY` no van en `config.yaml` sino en el Secret
 `order-api-secrets`, que se crea una vez a mano en el cluster (no esta en el repo):
 
 ```bash
 kubectl create secret generic order-api-secrets \
-  --from-literal=POWERAPPS_API_URL='https://...azurewebsites.net/api/external-sale-create?code=...'
+  --from-literal=POWERAPPS_API_URL='https://...azurewebsites.net/api/external-sale-create?code=...' \
+  --from-literal=API_KEY='...'
 kubectl rollout restart deployment/order-api   # para que el pod tome el valor
 ```
 
-Mientras no exista, el pod arranca igual pero el envio a VBI falla y las ordenes quedan `FAILED [VBI_ERROR]`.
+Mientras no exista, el pod arranca igual pero el envio a VBI falla (las ordenes quedan `FAILED [VBI_ERROR]`)
+y los POST protegidos responden 500.
 
 Aplicacion manual:
 

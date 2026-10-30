@@ -18,11 +18,13 @@ import { SyncOrderStatuses } from '../../../core/interactor/orders/SyncOrderStat
 import { OrdersController } from '../../controllers/orders/orders.controller';
 import { OrdersSyncController } from '../../controllers/orders/orders-sync.controller';
 import { OrdersService } from '../../services/orders/orders.service';
+import { OrdersCronService } from '../../services/orders/orders-cron.service';
 
 @Module({
   controllers: [OrdersController, OrdersSyncController],
   providers: [
     OrdersService,
+    OrdersCronService,
     OrdersInteractor,
     DispatchOrders,
     SyncOrderStatuses,
