@@ -24,8 +24,8 @@ POWERAPPS_API_URL=
 ORDERS_SYNC_CRON=0 0 */2 * * *
 # Por defecto: cada hora a los :30
 ORDERS_STATUS_CRON=0 30 * * * *
-# Header x-api-key que exigen POST /orders/sync, /orders/status-sync y /orders/retry.
-# Sin valor esos endpoints responden 500 (se rechaza todo). Los GET no la piden.
+# Header x-api-key que exigen todos los endpoints (en Swagger: boton Authorize).
+# Sin valor todos responden 500 (se rechaza todo). Los crons no la necesitan.
 API_KEY=
 # false: no corre ese cron (los endpoints manuales siguen andando). Sin valor corren.
 ORDERS_SYNC_CRON_ENABLED=false
@@ -100,7 +100,7 @@ kubectl rollout restart deployment/order-api   # para que el pod tome el valor
 ```
 
 Mientras no exista, el pod arranca igual pero el envio a VBI falla (las ordenes quedan `FAILED [VBI_ERROR]`)
-y los POST protegidos responden 500.
+y todos los endpoints responden 500. panel.market tiene que mandar la misma key en `x-api-key`.
 
 Aplicacion manual:
 

@@ -50,13 +50,13 @@ async function bootstrap() {
         type: 'apiKey',
         name: API_KEY_HEADER,
         in: 'header',
-        description:
-          'API key para los endpoints que disparan procesos (sync, status-sync, retry)',
+        description: 'API key requerida para todos los endpoints',
       },
       API_KEY_SECURITY,
     )
     .build();
   const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+  swaggerDocument.security = [{ [API_KEY_SECURITY]: [] }];
 
   SwaggerModule.setup('docs', app, swaggerDocument);
   await app.listen(process.env.PORT ?? 3000, '0.0.0.0');

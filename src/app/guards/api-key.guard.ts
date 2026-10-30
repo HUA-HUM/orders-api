@@ -13,8 +13,8 @@ export const API_KEY_HEADER = 'x-api-key';
 export const API_KEY_SECURITY = 'api-key';
 
 /**
- * Exige el header x-api-key igual a API_KEY (mismo esquema que central-promotion-engine).
- * Sin API_KEY configurada rechaza todo: estos endpoints disparan envios a VBI.
+ * Guard global (app.module): todos los endpoints exigen el header x-api-key igual a API_KEY,
+ * como en central-promotion-engine. Sin API_KEY configurada rechaza todo.
  */
 @Injectable()
 export class ApiKeyGuard implements CanActivate {

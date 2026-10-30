@@ -6,17 +6,8 @@ import {
   Param,
   Post,
   Query,
-  UseGuards,
 } from '@nestjs/common';
-import {
-  ApiOperation,
-  ApiParam,
-  ApiQuery,
-  ApiSecurity,
-  ApiTags,
-  ApiUnauthorizedResponse,
-} from '@nestjs/swagger';
-import { API_KEY_SECURITY, ApiKeyGuard } from '../../guards/api-key.guard';
+import { ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import {
   DispatchInProgressError,
   DispatchOrderNotFoundError,
@@ -26,14 +17,7 @@ import {
 import type { DispatchRange } from '../../../core/interactor/orders/DispatchOrders';
 import { SyncOrderStatuses } from '../../../core/interactor/orders/SyncOrderStatuses';
 
-// Disparan procesos y envios a VBI: requieren x-api-key. Los GET de orders.controller
-// siguen abiertos porque panel.market los consume sin key.
 @ApiTags('orders')
-@ApiSecurity(API_KEY_SECURITY)
-@ApiUnauthorizedResponse({
-  description: 'Falta el header x-api-key o no coincide con API_KEY',
-})
-@UseGuards(ApiKeyGuard)
 @Controller('orders')
 export class OrdersSyncController {
   constructor(
