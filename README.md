@@ -55,7 +55,12 @@ Recorre las ordenes `PENDING` de madre (`GET /api/orders/pending`), consulta cad
 - entregada (`Delivered`) → `COMPLETED`;
 - cancelada o devuelta (`Canceled` / `Returned` en Seller Central, o `canceled` en VTEX) → `COMPLETED`
   con `last_error` `[CANCELLED] ...` (madre todavia no acepta `CANCELLED`);
-- el resto sigue `PENDING`. No avisa a VBI.
+- el resto sigue `PENDING`.
+
+Ademas completa el numero TLQV (`floxu_code`): VBI lo asigna despues de crear la venta, asi que en el primer
+envio suele venir vacio. A las ordenes `PENDING` con `notification_system_b_status: success` y sin `floxu_code`
+(salvo las canceladas) las reenvia a VBI: como VBI deduplica por `NROVENTA` responde `duplicate` con el numero,
+sin crear otra venta.
 
 Sync, retry y estados no corren en paralelo: si uno esta en curso, el otro responde 409 (o el cron se omite).
 

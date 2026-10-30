@@ -58,7 +58,8 @@ export class OrdersSyncController {
       'Actualiza el estado de las ordenes PENDING de madre segun Fravega',
     description:
       'Las entregadas pasan a COMPLETED. Las canceladas o devueltas tambien quedan COMPLETED ' +
-      '(madre no acepta CANCELLED) con last_error "[CANCELLED] ...". No avisa a VBI.',
+      '(madre no acepta CANCELLED) con last_error "[CANCELLED] ...". ' +
+      'A las ya enviadas a VBI sin numero TLQV se lo completa en floxu_code (reenvio que VBI responde como duplicate).',
   })
   async statusSync() {
     try {
