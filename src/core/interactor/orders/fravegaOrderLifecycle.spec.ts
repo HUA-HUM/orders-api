@@ -48,7 +48,7 @@ describe('resolveFravegaLifecycle', () => {
       persistence_status: 'COMPLETED',
     });
     expect(closingStatusUpdate({ state: 'cancelled', detail: 'x' })).toEqual({
-      persistence_status: 'COMPLETED',
+      persistence_status: 'CANCELLED',
       last_error: '[CANCELLED] x',
     });
   });

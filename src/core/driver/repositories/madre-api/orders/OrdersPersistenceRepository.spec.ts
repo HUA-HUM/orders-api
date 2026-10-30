@@ -1,6 +1,10 @@
 import { OrdersPersistenceRepository } from './OrdersPersistenceRepository';
 import type { MadreHttpClient } from '../http/MadreHttpClient';
-import { emptyCustomer, emptyShipping, type NormalizedOrder } from '../../../../entitis/orders/Orders';
+import {
+  emptyCustomer,
+  emptyShipping,
+  type NormalizedOrder,
+} from '../../../../entitis/orders/Orders';
 
 describe('OrdersPersistenceRepository', () => {
   let http: { get: jest.Mock; post: jest.Mock; patch: jest.Mock };
@@ -37,7 +41,7 @@ describe('OrdersPersistenceRepository', () => {
       skipped: 0,
     });
 
-    const result = await repository.insert([order]);
+    const result = await repository.insert([{ order }]);
 
     expect(http.post).toHaveBeenCalledWith('/api/orders/batch', {
       orders: [expect.objectContaining({ unique_key: 'megatone:5453445' })],
@@ -60,7 +64,9 @@ describe('OrdersPersistenceRepository', () => {
       }),
     );
 
-    const result = await repository.insert(orders);
+    const result = await repository.insert(
+      orders.map((item) => ({ order: item })),
+    );
 
     expect(http.post).toHaveBeenCalledTimes(3);
     for (const call of http.post.mock.calls) {
@@ -69,6 +75,62 @@ describe('OrdersPersistenceRepository', () => {
     expect(result.total).toBe(60);
     expect(result.inserted).toBe(60);
     expect(result.skipped).toBe(0);
+  });
+
+  it('insert sends the processing result so the order is stored already processed', async () => {
+    http.post.mockResolvedValueOnce({
+      status: 'ok',
+      total: 1,
+      inserted: 1,
+      skipped: 0,
+    });
+
+    await repository.insert([
+      {
+        order,
+        processing: {
+          persistence_status: 'PENDING',
+          notification_system_b_status: 'success',
+          floxu_code: null,
+          vbi_sale_id: 'sale-1',
+          vbi_nro_venta: '5453445',
+          last_error: null,
+        },
+      },
+    ]);
+
+    expect(http.post).toHaveBeenCalledWith('/api/orders/batch', {
+      orders: [
+        expect.objectContaining({
+          unique_key: 'megatone:5453445',
+          persistence_status: 'PENDING',
+          notification_system_b_status: 'success',
+          vbi_sale_id: 'sale-1',
+          vbi_nro_venta: '5453445',
+        }),
+      ],
+    });
+  });
+
+  it('findPending sends the page query to madre', async () => {
+    http.get.mockResolvedValueOnce({
+      limit: 200,
+      count: 0,
+      nextAfterId: null,
+      items: [],
+    });
+
+    await repository.findPending({
+      limit: 200,
+      marketplace: 'fravega',
+      afterId: 120,
+    });
+
+    expect(http.get).toHaveBeenCalledWith('/api/orders/pending', {
+      limit: 200,
+      marketplace: 'fravega',
+      afterId: 120,
+    });
   });
 
   it('findByUniqueKey url-encodes the colon in the unique_key', async () => {
@@ -95,6 +157,6 @@ describe('OrdersPersistenceRepository', () => {
     const error = new Error('boom');
     http.post.mockRejectedValueOnce(error);
 
-    await expect(repository.insert([order])).rejects.toBe(error);
+    await expect(repository.insert([{ order }])).rejects.toBe(error);
   });
 });

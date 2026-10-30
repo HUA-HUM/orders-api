@@ -35,27 +35,38 @@ ORDERS_STATUS_CRON_ENABLED=false
 ### Flujo de ordenes (cron `ORDERS_SYNC_CRON`, por defecto cada 2 horas, o `POST /orders/fravega/sync`)
 
 `persistence_status` en madre sigue el estado de la orden en Fravega: `PENDING` mientras esta abierta,
-`COMPLETED` cuando se entrega o se cancela. El resultado de VBI va en `notification_system_b_status` y `floxu_code`.
+`COMPLETED` cuando se entrega y `CANCELLED` cuando se cancela o se devuelve. El resultado de VBI va en
+`notification_system_b_status`, `floxu_code` (numero TLQV), `vbi_sale_id` y `vbi_nro_venta`.
 
 1. Trae las ordenes nuevas de Fravega desde marketplace-api (`/fravega/full-orders`), desde el ultimo sync.
-2. Las guarda en madre. Las que ya existen se saltean.
-3. Si ya esta cancelada o devuelta en Fravega no se envia a VBI: queda `COMPLETED` con `last_error` `[CANCELLED] ...`.
+2. Las que ya existen en madre se saltean.
+3. Si ya esta cancelada o devuelta en Fravega no se envia a VBI: queda `CANCELLED` con el detalle en `last_error`.
 4. Si falta el CUIL o el email del comprador queda `FAILED` con `last_error` `[MISSING_DATA] ...`.
-5. La envia a VBI: si responde `status: "success"` queda `PENDING` (o `COMPLETED` si ya fue entregada),
-   con `notification_system_b_status: success` y el `tlqtNumber` en `floxu_code`. Si no, `FAILED` con `[VBI_ERROR] ...`.
+5. La envia a VBI: si responde `success` (o `duplicate`) queda `PENDING` (o `COMPLETED` si ya fue entregada),
+   con `notification_system_b_status: success`. Si no, `FAILED` con `[VBI_ERROR] ...`.
 6. Las ordenes que marketplace-api no pudo completar (falla VTEX / Seller Central) quedan `FAILED` con `[SOURCE_ERROR] ...`.
+7. Recien ahi la inserta en madre, en un solo batch con el resultado.
+
+Si VBI la acepto pero madre no la pudo guardar, el sync automatico no avanza su marca y la vuelve a procesar:
+VBI deduplica por `NROVENTA`, responde `duplicate` y se guarda sin crear otra venta.
+
+Requiere la version de madre-api que acepta el resultado en el batch (`vbi_*`, `persistence_status`, `CANCELLED`)
+y pagina `/pending`: con una version anterior madre descarta esos campos y las ordenes quedarian `PENDING` sin datos de VBI.
+Deployar madre-api antes que orders-api.
 
 - `POST /orders/fravega/sync?from=...&to=...` reprocesa un rango de fechas de compra a mano.
 - `POST /orders/fravega/retry/{suborderId}` reintenta una orden `FAILED` (ej. `v93713051frvg-01`).
 
 ### Estados (cron `ORDERS_STATUS_CRON`, por defecto cada hora a los :30, o `POST /orders/fravega/status-sync`)
 
-Recorre las ordenes `PENDING` de madre (`GET /api/orders/pending`), consulta cada una en Fravega y:
+Recorre las ordenes `PENDING` de Fravega en madre (`GET /api/orders/pending`, de a 200), consulta cada una en Fravega y:
 
 - entregada (`Delivered`) → `COMPLETED`;
-- cancelada o devuelta (`Canceled` / `Returned` en Seller Central, o `canceled` en VTEX) → `COMPLETED`
-  con `last_error` `[CANCELLED] ...` (madre todavia no acepta `CANCELLED`);
+- cancelada o devuelta (`Canceled` / `Returned` en Seller Central, o `canceled` en VTEX) → `CANCELLED`
+  con el detalle en `last_error` (`[CANCELLED] ...`);
 - el resto sigue `PENDING`.
+
+En todas actualiza `status` y `delivery_status` si cambiaron en Fravega.
 
 Ademas completa el numero TLQV (`floxu_code`): VBI lo asigna despues de crear la venta, asi que en el primer
 envio suele venir vacio. A las ordenes `PENDING` con `notification_system_b_status: success` y sin `floxu_code`

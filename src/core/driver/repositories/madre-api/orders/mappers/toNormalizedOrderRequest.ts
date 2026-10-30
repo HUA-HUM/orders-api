@@ -1,10 +1,14 @@
 import type { NormalizedOrder } from '../../../../../entitis/orders/Orders';
-import type { NormalizedOrderRequest } from '../../../../../entitis/madre-api/orders/NormalizedOrderRequest';
+import type {
+  NormalizedOrderRequest,
+  OrderProcessingFields,
+} from '../../../../../entitis/madre-api/orders/NormalizedOrderRequest';
 
 const SOURCE_SCHEMA_VERSION = 'v1';
 
 export function toNormalizedOrderRequest(
   order: NormalizedOrder,
+  processing: OrderProcessingFields = {},
 ): NormalizedOrderRequest {
   const externalSuborderId = order.suborderId ?? null;
   const uniqueKey = buildUniqueKey(
@@ -26,7 +30,7 @@ export function toNormalizedOrderRequest(
     amount_total: order.amount,
     currency: null,
     status: order.latestStatus,
-    delivery_status: null,
+    delivery_status: order.latestDeliveryStatus ?? null,
     items_quantity: sumItemsQuantity(order),
     shipping_address: order.shipping.address,
     shipping_city: order.shipping.city,
@@ -36,6 +40,7 @@ export function toNormalizedOrderRequest(
     source_payload: toSourcePayload(order.raw),
     normalized_payload: buildNormalizedPayload(order),
     source_schema_version: SOURCE_SCHEMA_VERSION,
+    ...processing,
   };
 }
 

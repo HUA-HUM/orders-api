@@ -1,4 +1,7 @@
-import type { NormalizedOrderRequest } from './NormalizedOrderRequest';
+import type {
+  NormalizedOrderRequest,
+  PersistenceStatus,
+} from './NormalizedOrderRequest';
 
 export interface InsertOrdersResponse {
   status: string;
@@ -9,10 +12,12 @@ export interface InsertOrdersResponse {
 
 export interface PersistedOrder extends NormalizedOrderRequest {
   id: number;
-  persistence_status: string;
+  persistence_status: PersistenceStatus;
   notification_system_a_status: string | null;
   notification_system_b_status: string | null;
   floxu_code: string | null;
+  vbi_sale_id: string | null;
+  vbi_nro_venta: string | null;
   invoice_number: string | null;
   invoice_url: string | null;
   invoice_date: string | null;
@@ -27,14 +32,23 @@ export interface FindOrderResponse {
   order: PersistedOrder | null;
 }
 
+export interface PendingOrdersQuery {
+  limit: number;
+  marketplace?: string;
+  // Paginado: devuelve las de id mayor
+  afterId?: number;
+}
+
 export interface PendingOrdersResponse {
   limit: number;
   count: number;
+  // Pagina llena: puede haber mas, se piden con afterId = nextAfterId
+  nextAfterId: number | null;
   items: PersistedOrder[];
 }
 
 export interface UpdateOrderStatusRequest {
-  persistence_status?: string;
+  persistence_status?: PersistenceStatus;
   notification_system_a_status?: string | null;
   notification_system_b_status?: string | null;
   floxu_code?: string | null;
@@ -42,6 +56,12 @@ export interface UpdateOrderStatusRequest {
   invoice_url?: string | null;
   invoice_date?: string | null;
   last_error?: string | null;
+  vbi_sale_id?: string | null;
+  vbi_nro_venta?: string | null;
+  // Status RAW del marketplace
+  status?: string | null;
+  delivery_status?: string | null;
+  estimated_delivery_date?: string | null;
 }
 
 export interface UpdateOrderStatusResponse {

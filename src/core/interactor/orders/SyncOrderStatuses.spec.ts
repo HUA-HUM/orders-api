@@ -31,8 +31,13 @@ describe('SyncOrderStatuses', () => {
       external_order_id: String(1000 + id),
       external_suborder_id: suborderId,
       persistence_status: 'PENDING',
+      // Lo que madre tiene guardado de Fravega
+      status: 'Created',
+      delivery_status: 'Pending',
       notification_system_b_status: null,
       floxu_code: null,
+      vbi_sale_id: null,
+      vbi_nro_venta: null,
       ...vbi,
     }) as PersistedOrder;
 
@@ -73,7 +78,7 @@ describe('SyncOrderStatuses', () => {
     );
   });
 
-  it('closes delivered and cancelled orders and leaves open ones PENDING', async () => {
+  it('closes delivered (COMPLETED) and cancelled (CANCELLED) orders and leaves open ones PENDING', async () => {
     persistenceRepository.findPending.mockResolvedValue({
       items: [
         pendingOrder(1, 'v1frvg-01'),
@@ -87,7 +92,7 @@ describe('SyncOrderStatuses', () => {
         {
           'v1frvg-01': fravegaStatus('Invoiced', 'Delivered'),
           'v2frvg-01': fravegaStatus('Returned', 'Canceled'),
-          'v3frvg-01': fravegaStatus('Invoiced', 'Pending'),
+          'v3frvg-01': fravegaStatus('Created', 'Pending'),
         }[suborderId],
       ),
     );
@@ -100,10 +105,14 @@ describe('SyncOrderStatuses', () => {
     );
     expect(persistenceRepository.updateStatus).toHaveBeenCalledTimes(2);
     expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(1, {
+      status: 'Invoiced',
+      delivery_status: 'Delivered',
       persistence_status: 'COMPLETED',
     });
     expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(2, {
-      persistence_status: 'COMPLETED',
+      status: 'Returned',
+      delivery_status: 'Canceled',
+      persistence_status: 'CANCELLED',
       last_error:
         '[CANCELLED] Seller Central: Returned (entrega Canceled), VTEX: ready-for-handling',
     });
@@ -134,6 +143,8 @@ describe('SyncOrderStatuses', () => {
     expect(powerAppsRepository.createSale).toHaveBeenCalledTimes(1);
     expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(1, {
       floxu_code: 'TLQV-22733',
+      vbi_sale_id: 'sale-1',
+      vbi_nro_venta: '1001',
     });
     expect(result).toMatchObject({ open: 1, tlqtFilled: 1, errors: [] });
   });
@@ -153,8 +164,12 @@ describe('SyncOrderStatuses', () => {
 
     expect(persistenceRepository.updateStatus).toHaveBeenCalledTimes(1);
     expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(1, {
+      status: 'Invoiced',
+      delivery_status: 'Delivered',
       persistence_status: 'COMPLETED',
       floxu_code: 'TLQV-22733',
+      vbi_sale_id: 'sale-1',
+      vbi_nro_venta: '1001',
     });
   });
 
@@ -190,9 +205,14 @@ describe('SyncOrderStatuses', () => {
     expect(result.cancelled).toBe(1);
   });
 
-  it('keeps the order open when VBI still has no TLQV number', async () => {
+  it('keeps the order open when VBI still has no TLQV number, saving only the missing VBI ids', async () => {
     persistenceRepository.findPending.mockResolvedValue({
-      items: [pendingOrder(1, 'v1frvg-01', 'fravega', sentWithoutTlqt)],
+      items: [
+        pendingOrder(1, 'v1frvg-01', 'fravega', {
+          ...sentWithoutTlqt,
+          vbi_nro_venta: '1001',
+        }),
+      ],
     });
     fravegaRepository.getFullOrder.mockResolvedValue(
       fravegaStatus('Created', 'Pending'),
@@ -201,8 +221,71 @@ describe('SyncOrderStatuses', () => {
 
     const result = await sync.run();
 
-    expect(persistenceRepository.updateStatus).not.toHaveBeenCalled();
+    expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(1, {
+      vbi_sale_id: 'sale-1',
+    });
     expect(result).toMatchObject({ open: 1, tlqtFilled: 0 });
+  });
+
+  it('updates status and delivery_status when they change in Fravega, without closing the order', async () => {
+    persistenceRepository.findPending.mockResolvedValue({
+      items: [pendingOrder(1, 'v1frvg-01')],
+    });
+    fravegaRepository.getFullOrder.mockResolvedValue(
+      fravegaStatus('Invoiced', 'Shipped'),
+    );
+
+    const result = await sync.run();
+
+    expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(1, {
+      status: 'Invoiced',
+      delivery_status: 'Shipped',
+    });
+    expect(result.open).toBe(1);
+  });
+
+  it('does not overwrite the stored status with empty values', async () => {
+    persistenceRepository.findPending.mockResolvedValue({
+      items: [pendingOrder(1, 'v1frvg-01')],
+    });
+    fravegaRepository.getFullOrder.mockResolvedValue({
+      orderId: 1,
+      suborderId: 'x',
+      status: { sellerCentral: null, vtex: 'ready-for-handling' },
+    });
+
+    await sync.run();
+
+    expect(persistenceRepository.updateStatus).not.toHaveBeenCalled();
+  });
+
+  it('reads every page of pending orders from madre', async () => {
+    persistenceRepository.findPending
+      .mockResolvedValueOnce({
+        items: [pendingOrder(1, 'v1frvg-01')],
+        nextAfterId: 1,
+      })
+      .mockResolvedValueOnce({
+        items: [pendingOrder(2, 'v2frvg-01')],
+        nextAfterId: null,
+      });
+    fravegaRepository.getFullOrder.mockResolvedValue(
+      fravegaStatus('Created', 'Pending'),
+    );
+
+    const result = await sync.run();
+
+    expect(persistenceRepository.findPending).toHaveBeenNthCalledWith(1, {
+      limit: 200,
+      marketplace: 'fravega',
+      afterId: undefined,
+    });
+    expect(persistenceRepository.findPending).toHaveBeenNthCalledWith(2, {
+      limit: 200,
+      marketplace: 'fravega',
+      afterId: 1,
+    });
+    expect(result.checked).toBe(2);
   });
 
   it('closes the order even if VBI fails while fetching the TLQV number', async () => {
@@ -217,6 +300,8 @@ describe('SyncOrderStatuses', () => {
     const result = await sync.run();
 
     expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(1, {
+      status: 'Invoiced',
+      delivery_status: 'Delivered',
       persistence_status: 'COMPLETED',
     });
     expect(result.delivered).toBe(1);

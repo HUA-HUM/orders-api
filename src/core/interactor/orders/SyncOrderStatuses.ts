@@ -4,8 +4,10 @@ import type { IGetFravegaOrdersRepository } from '../../adapters/repositories/ma
 import { I_ORDERS_PERSISTENCE_REPOSITORY } from '../../adapters/repositories/madre/orders/IOrdersPersistenceRepository';
 import type { IOrdersPersistenceRepository } from '../../adapters/repositories/madre/orders/IOrdersPersistenceRepository';
 import { I_POWERAPPS_DISPATCH_REPOSITORY } from '../../adapters/repositories/dispatch/powerapps/IPowerAppsDispatchRepository';
-import type { IPowerAppsDispatchRepository } from '../../adapters/repositories/dispatch/powerapps/IPowerAppsDispatchRepository';
-import type { FravegaFullOrderResponse } from '../../entitis/marketplace-api/fravega/orders/GetFravegaFullOrdersResponse';
+import type {
+  IPowerAppsDispatchRepository,
+  PowerAppsDispatchResult,
+} from '../../adapters/repositories/dispatch/powerapps/IPowerAppsDispatchRepository';
 import type {
   PersistedOrder,
   UpdateOrderStatusRequest,
@@ -15,6 +17,7 @@ import {
   resolveFravegaLifecycle,
 } from './fravegaOrderLifecycle';
 import type { FravegaOrderLifecycle } from './fravegaOrderLifecycle';
+import type { NormalizedOrder } from '../../entitis/orders/Orders';
 import { fravegaFullOrderToNormalized } from './mappers/fravegaFullOrderToNormalized';
 import { OrdersProcessLock } from './OrdersProcessLock';
 
@@ -36,14 +39,16 @@ export interface SyncOrderStatusesResult {
 }
 
 /**
- * Recorre las ordenes PENDING de madre y cierra las que Fravega ya entrego
- * o cancelo (COMPLETED). A las ya enviadas a VBI sin numero TLQV se lo completa:
- * VBI lo asigna despues de crear la venta y lo devuelve al reenviarla como duplicada.
+ * Recorre las ordenes PENDING de madre y cierra las que Fravega ya entrego (COMPLETED)
+ * o cancelo (CANCELLED). Actualiza el status y el estado de entrega si cambiaron.
+ * A las ya enviadas a VBI sin numero TLQV se lo completa: VBI lo asigna despues
+ * de crear la venta y lo devuelve al reenviarla como duplicada.
  */
 @Injectable()
 export class SyncOrderStatuses {
-  // madre no pagina /pending: se piden todas de una vez
-  private static readonly PENDING_LIMIT = 1000;
+  // madre devuelve hasta 200 por pagina
+  private static readonly PAGE_LIMIT = 200;
+  private static readonly MAX_PAGES = 50;
   private static readonly CONCURRENCY = 5;
   private readonly logger = new Logger(SyncOrderStatuses.name);
 
@@ -69,20 +74,13 @@ export class SyncOrderStatuses {
         errors: [],
       };
 
-      const pending = await this.ordersPersistenceRepository.findPending(
-        SyncOrderStatuses.PENDING_LIMIT,
-      );
-      if (pending.items.length >= SyncOrderStatuses.PENDING_LIMIT) {
-        this.logger.warn(
-          `[status-sync] madre devolvio el maximo de ${SyncOrderStatuses.PENDING_LIMIT} pendientes: puede haber mas`,
-        );
-      }
+      const pending = await this.loadPending();
 
-      const fravega = pending.items.filter(
+      const fravega = pending.filter(
         (order) =>
           order.marketplace === 'fravega' && order.external_suborder_id,
       );
-      result.ignored = pending.items.length - fravega.length;
+      result.ignored = pending.length - fravega.length;
 
       for (let i = 0; i < fravega.length; i += SyncOrderStatuses.CONCURRENCY) {
         await Promise.all(
@@ -99,6 +97,31 @@ export class SyncOrderStatuses {
     });
   }
 
+  /* Todas las PENDING de Fravega, pagina por pagina */
+  private async loadPending(): Promise<PersistedOrder[]> {
+    const orders: PersistedOrder[] = [];
+    let afterId: number | undefined;
+
+    for (let page = 1; page <= SyncOrderStatuses.MAX_PAGES; page += 1) {
+      const response = await this.ordersPersistenceRepository.findPending({
+        limit: SyncOrderStatuses.PAGE_LIMIT,
+        marketplace: 'fravega',
+        afterId,
+      });
+      orders.push(...response.items);
+
+      if (response.nextAfterId === null || response.nextAfterId === undefined) {
+        return orders;
+      }
+      afterId = response.nextAfterId;
+    }
+
+    this.logger.warn(
+      `[status-sync] se alcanzo el maximo de ${SyncOrderStatuses.MAX_PAGES} paginas de pendientes`,
+    );
+    return orders;
+  }
+
   private async check(
     order: PersistedOrder,
     result: SyncOrderStatusesResult,
@@ -110,26 +133,30 @@ export class SyncOrderStatuses {
       );
       result.checked += 1;
 
+      const normalized = fravegaFullOrderToNormalized(fullOrder);
       const lifecycle = resolveFravegaLifecycle(fullOrder);
-      const closing = closingStatusUpdate(lifecycle);
-      const tlqtNumber = await this.fetchMissingTlqt(
+      const sale = await this.fetchMissingTlqt(
         order,
-        fullOrder,
+        normalized,
         lifecycle,
         result,
       );
 
-      // Cierre y numero TLQV van en un solo PATCH
+      // Estado, cierre y datos de VBI van en un solo PATCH; si nada cambio no se llama
       const update: UpdateOrderStatusRequest = {
-        ...closing,
-        ...(tlqtNumber && { floxu_code: tlqtNumber }),
+        ...this.rawStatusChanges(order, normalized),
+        ...closingStatusUpdate(lifecycle),
+        ...(sale?.tlqtNumber && { floxu_code: sale.tlqtNumber }),
+        ...(sale?.saleId && !order.vbi_sale_id && { vbi_sale_id: sale.saleId }),
+        ...(sale?.nroVenta &&
+          !order.vbi_nro_venta && { vbi_nro_venta: sale.nroVenta }),
       };
 
       if (Object.keys(update).length > 0) {
         await this.ordersPersistenceRepository.updateStatus(order.id, update);
       }
 
-      if (tlqtNumber) result.tlqtFilled += 1;
+      if (sale?.tlqtNumber) result.tlqtFilled += 1;
       if (lifecycle.state === 'cancelled') {
         result.cancelled += 1;
       } else if (lifecycle.state === 'delivered') {
@@ -151,12 +178,30 @@ export class SyncOrderStatuses {
    * b_status success, sin floxu_code y no canceladas en Fravega.
    * Si falla se informa y sigue: el cierre de la orden no depende de esto.
    */
+  /* Status y estado de entrega de Fravega que cambiaron respecto de madre (sin pisar con vacios) */
+  private rawStatusChanges(
+    order: PersistedOrder,
+    normalized: NormalizedOrder,
+  ): UpdateOrderStatusRequest {
+    const changes: UpdateOrderStatusRequest = {};
+    const status = normalized.latestStatus;
+    const deliveryStatus = normalized.latestDeliveryStatus ?? null;
+
+    if (status && status !== order.status) {
+      changes.status = status;
+    }
+    if (deliveryStatus && deliveryStatus !== order.delivery_status) {
+      changes.delivery_status = deliveryStatus;
+    }
+    return changes;
+  }
+
   private async fetchMissingTlqt(
     order: PersistedOrder,
-    fullOrder: FravegaFullOrderResponse,
+    normalized: NormalizedOrder,
     lifecycle: FravegaOrderLifecycle,
     result: SyncOrderStatusesResult,
-  ): Promise<string | null> {
+  ): Promise<PowerAppsDispatchResult | null> {
     if (
       order.notification_system_b_status !== 'success' ||
       order.floxu_code ||
@@ -166,10 +211,7 @@ export class SyncOrderStatuses {
     }
 
     try {
-      const sale = await this.powerAppsRepository.createSale(
-        fravegaFullOrderToNormalized(fullOrder),
-      );
-      return sale.tlqtNumber;
+      return await this.powerAppsRepository.createSale(normalized);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'error inesperado';

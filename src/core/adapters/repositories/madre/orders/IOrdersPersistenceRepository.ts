@@ -1,7 +1,9 @@
 import type { NormalizedOrder } from '../../../../entitis/orders/Orders';
+import type { OrderProcessingFields } from '../../../../entitis/madre-api/orders/NormalizedOrderRequest';
 import type {
   FindOrderResponse,
   InsertOrdersResponse,
+  PendingOrdersQuery,
   PendingOrdersResponse,
   UpdateOrderStatusRequest,
   UpdateOrderStatusResponse,
@@ -11,13 +13,19 @@ export const I_ORDERS_PERSISTENCE_REPOSITORY = Symbol(
   'I_ORDERS_PERSISTENCE_REPOSITORY',
 );
 
+export interface OrderToPersist {
+  order: NormalizedOrder;
+  // Sin resultado se inserta PENDING
+  processing?: OrderProcessingFields;
+}
+
 export interface IOrdersPersistenceRepository {
-  insert(orders: NormalizedOrder[]): Promise<InsertOrdersResponse>;
+  insert(orders: OrderToPersist[]): Promise<InsertOrdersResponse>;
 
   findByUniqueKey(uniqueKey: string): Promise<FindOrderResponse>;
 
-  /* Ordenes con persistence_status PENDING (madre solo acepta limit, sin paginado) */
-  findPending(limit: number): Promise<PendingOrdersResponse>;
+  /* Ordenes con persistence_status PENDING, de a una pagina (madre devuelve hasta 200) */
+  findPending(query: PendingOrdersQuery): Promise<PendingOrdersResponse>;
 
   updateStatus(
     id: number,

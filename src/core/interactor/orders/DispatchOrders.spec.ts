@@ -6,7 +6,10 @@ import {
 import { OrdersProcessLock } from './OrdersProcessLock';
 import type { IGetFravegaOrdersRepository } from '../../adapters/repositories/marketplace/fravega/orders/IGetFravegaOrdersRepository';
 import type { IPowerAppsDispatchRepository } from '../../adapters/repositories/dispatch/powerapps/IPowerAppsDispatchRepository';
-import type { IOrdersPersistenceRepository } from '../../adapters/repositories/madre/orders/IOrdersPersistenceRepository';
+import type {
+  IOrdersPersistenceRepository,
+  OrderToPersist,
+} from '../../adapters/repositories/madre/orders/IOrdersPersistenceRepository';
 import type {
   FravegaFullOrderError,
   FravegaFullOrderResponse,
@@ -76,12 +79,16 @@ describe('DispatchOrders', () => {
     errors: options.errors ?? [],
   });
 
-  /* findByUniqueKey: primero no existe, despues del insert existe con ese id */
-  const newOrderInMadre = (id: number) => {
-    persistenceRepository.findByUniqueKey
-      .mockResolvedValueOnce({ exists: false, order: null })
-      .mockResolvedValueOnce({ exists: true, order: { id } });
+  const notInMadre = () => {
+    persistenceRepository.findByUniqueKey.mockResolvedValue({
+      exists: false,
+      order: null,
+    });
   };
+
+  /* Lo que se inserto en madre: la orden y el resultado del procesamiento */
+  const inserted = (): OrderToPersist =>
+    (persistenceRepository.insert.mock.calls[0] as [OrderToPersist[]])[0][0];
 
   const sentToVbi = (): NormalizedOrder =>
     (powerAppsRepository.createSale.mock.calls[0] as [NormalizedOrder])[0];
@@ -106,11 +113,12 @@ describe('DispatchOrders', () => {
     );
   });
 
-  it('persists a new order in madre, sends it to VBI and keeps it PENDING while open in Fravega', async () => {
+  it('sends a new order to VBI first and then inserts it in madre already processed, PENDING while open', async () => {
     fravegaRepository.listFullOrders.mockResolvedValue(page([fullOrder()]));
-    newOrderInMadre(7);
+    notInMadre();
     powerAppsRepository.createSale.mockResolvedValue({
       ok: true,
+      duplicate: false,
       saleId: '1',
       nroVenta: '25',
       tlqtNumber: 'TLQV-36120',
@@ -118,22 +126,32 @@ describe('DispatchOrders', () => {
 
     const result = await orchestrator.run();
 
-    expect(persistenceRepository.insert).toHaveBeenCalledTimes(1);
     expect(sentToVbi()).toMatchObject({
       orderId: '19836023',
       suborderId: 'v93713051frvg-01',
       customer: { document: '27253275877', email: 'g@example.com' },
     });
-    expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(7, {
+    expect(
+      powerAppsRepository.createSale.mock.invocationCallOrder[0],
+    ).toBeLessThan(persistenceRepository.insert.mock.invocationCallOrder[0]);
+    expect(persistenceRepository.insert).toHaveBeenCalledTimes(1);
+    expect(inserted().order).toMatchObject({
+      orderId: '19836023',
+      latestStatus: 'Created',
+    });
+    expect(inserted().processing).toEqual({
       persistence_status: 'PENDING',
       notification_system_b_status: 'success',
       floxu_code: 'TLQV-36120',
+      vbi_sale_id: '1',
+      vbi_nro_venta: '25',
       last_error: null,
     });
+    expect(persistenceRepository.updateStatus).not.toHaveBeenCalled();
     expect(result).toMatchObject({ collected: 1, dispatched: 1, failed: 0 });
   });
 
-  it('marks COMPLETED a new order that Fravega already delivered', async () => {
+  it('inserts COMPLETED a new order that Fravega already delivered', async () => {
     fravegaRepository.listFullOrders.mockResolvedValue(
       page([
         fullOrder({
@@ -145,7 +163,7 @@ describe('DispatchOrders', () => {
         }),
       ]),
     );
-    newOrderInMadre(7);
+    notInMadre();
     powerAppsRepository.createSale.mockResolvedValue({
       ok: true,
       saleId: '1',
@@ -155,13 +173,13 @@ describe('DispatchOrders', () => {
 
     await orchestrator.run();
 
-    expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(
-      7,
-      expect.objectContaining({ persistence_status: 'COMPLETED' }),
-    );
+    expect(inserted().order.latestDeliveryStatus).toBe('Delivered');
+    expect(inserted().processing).toMatchObject({
+      persistence_status: 'COMPLETED',
+    });
   });
 
-  it('does not send to VBI a new order already returned in Fravega', async () => {
+  it('inserts CANCELLED a new order already returned in Fravega, without sending it to VBI', async () => {
     fravegaRepository.listFullOrders.mockResolvedValue(
       page([
         fullOrder({
@@ -173,13 +191,13 @@ describe('DispatchOrders', () => {
         }),
       ]),
     );
-    newOrderInMadre(7);
+    notInMadre();
 
     const result = await orchestrator.run();
 
     expect(powerAppsRepository.createSale).not.toHaveBeenCalled();
-    expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(7, {
-      persistence_status: 'COMPLETED',
+    expect(inserted().processing).toEqual({
+      persistence_status: 'CANCELLED',
       last_error:
         '[CANCELLED] Seller Central: Returned (entrega Canceled), VTEX: ready-for-handling',
     });
@@ -203,17 +221,33 @@ describe('DispatchOrders', () => {
     expect(result).toMatchObject({ skipped: 1, dispatched: 0 });
   });
 
-  it('marks FAILED with MISSING_DATA when cuil is missing and does not call VBI', async () => {
-    fravegaRepository.listFullOrders.mockResolvedValue(
-      page([fullOrder({ buyer: { ...fullOrder().buyer, cuil: '' } })]),
+  it('does not send to VBI when madre cannot be checked', async () => {
+    fravegaRepository.listFullOrders.mockResolvedValue(page([fullOrder()]));
+    persistenceRepository.findByUniqueKey.mockRejectedValue(
+      new Error('madre caido'),
     );
-    newOrderInMadre(8);
 
     const result = await orchestrator.run();
 
-    expect(persistenceRepository.insert).toHaveBeenCalledTimes(1);
     expect(powerAppsRepository.createSale).not.toHaveBeenCalled();
-    expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(8, {
+    expect(persistenceRepository.insert).not.toHaveBeenCalled();
+    expect(result.errors).toContainEqual({
+      orderId: '19836023',
+      stage: 'persist',
+      message: 'madre caido',
+    });
+  });
+
+  it('inserts FAILED with MISSING_DATA when cuil is missing and does not call VBI', async () => {
+    fravegaRepository.listFullOrders.mockResolvedValue(
+      page([fullOrder({ buyer: { ...fullOrder().buyer, cuil: '' } })]),
+    );
+    notInMadre();
+
+    const result = await orchestrator.run();
+
+    expect(powerAppsRepository.createSale).not.toHaveBeenCalled();
+    expect(inserted().processing).toEqual({
       persistence_status: 'FAILED',
       last_error: '[MISSING_DATA] Faltan datos del comprador: document',
     });
@@ -228,30 +262,27 @@ describe('DispatchOrders', () => {
         }),
       ]),
     );
-    newOrderInMadre(9);
+    notInMadre();
 
     await orchestrator.run();
 
     expect(powerAppsRepository.createSale).not.toHaveBeenCalled();
-    expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(
-      9,
-      expect.objectContaining({
-        persistence_status: 'FAILED',
-        last_error: '[MISSING_DATA] Faltan datos del comprador: email',
-      }),
-    );
+    expect(inserted().processing).toMatchObject({
+      persistence_status: 'FAILED',
+      last_error: '[MISSING_DATA] Faltan datos del comprador: email',
+    });
   });
 
-  it('marks FAILED with VBI_ERROR when VBI rejects the sale', async () => {
+  it('inserts FAILED with VBI_ERROR when VBI rejects the sale', async () => {
     fravegaRepository.listFullOrders.mockResolvedValue(page([fullOrder()]));
-    newOrderInMadre(10);
+    notInMadre();
     powerAppsRepository.createSale.mockRejectedValue(
       new Error('PowerApps respondio 500: boom'),
     );
 
     const result = await orchestrator.run();
 
-    expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(10, {
+    expect(inserted().processing).toEqual({
       notification_system_b_status: 'failed',
       persistence_status: 'FAILED',
       last_error: '[VBI_ERROR] PowerApps respondio 500: boom',
@@ -263,7 +294,35 @@ describe('DispatchOrders', () => {
     });
   });
 
-  it('persists orders that marketplace-api could not complete as FAILED SOURCE_ERROR', async () => {
+  it('reports an order VBI accepted but madre could not store, and does not move the sync mark', async () => {
+    fravegaRepository.listFullOrders.mockResolvedValue(page([fullOrder()]));
+    notInMadre();
+    powerAppsRepository.createSale.mockResolvedValue({
+      ok: true,
+      saleId: '1',
+      nroVenta: '25',
+      tlqtNumber: null,
+    });
+    persistenceRepository.insert.mockRejectedValueOnce(new Error('madre 500'));
+
+    const failed = await orchestrator.run();
+    const next = await orchestrator.run();
+
+    expect(failed).toMatchObject({ dispatched: 0, failed: 1 });
+    expect(failed.errors[0]).toMatchObject({
+      stage: 'persist',
+      message: expect.stringContaining(
+        'Enviada a VBI (sin numero TLQV) pero no se pudo guardar en madre: madre 500',
+      ) as string,
+    });
+    // Sin marca: el siguiente sync vuelve a cubrir el periodo y la guarda
+    const lookbackMs =
+      new Date(next.window.to).getTime() - new Date(next.window.from).getTime();
+    expect(lookbackMs).toBe((24 * 60 + 30) * 60 * 1000);
+    expect(next.dispatched).toBe(1);
+  });
+
+  it('inserts orders that marketplace-api could not complete as FAILED SOURCE_ERROR', async () => {
     fravegaRepository.listFullOrders.mockResolvedValue(
       page([], {
         errors: [
@@ -276,18 +335,15 @@ describe('DispatchOrders', () => {
         ],
       }),
     );
-    newOrderInMadre(11);
+    notInMadre();
 
     const result = await orchestrator.run();
 
-    const [[inserted]] = persistenceRepository.insert.mock.calls as [
-      [NormalizedOrder],
-    ][];
-    expect(inserted[0]).toMatchObject({
+    expect(inserted().order).toMatchObject({
       orderId: '1',
       suborderId: 'v1frvg-01',
     });
-    expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(11, {
+    expect(inserted().processing).toEqual({
       persistence_status: 'FAILED',
       last_error: '[SOURCE_ERROR] vtex: VTEX 404',
     });
@@ -387,15 +443,15 @@ describe('DispatchOrders', () => {
       },
     });
 
-    it('re-fetches a FAILED order and leaves it PENDING when VBI accepts it', async () => {
+    it('re-fetches a FAILED order, sends it to VBI and stores the result with the refreshed Fravega data', async () => {
       persistenceRepository.findByUniqueKey.mockResolvedValue(
         persisted('FAILED'),
       );
       fravegaRepository.getFullOrder.mockResolvedValue(fullOrder());
       powerAppsRepository.createSale.mockResolvedValue({
         ok: true,
-        saleId: null,
-        nroVenta: null,
+        saleId: 'sale-1',
+        nroVenta: '19836023',
         tlqtNumber: null,
       });
 
@@ -406,6 +462,17 @@ describe('DispatchOrders', () => {
         '19836023',
       );
       expect(persistenceRepository.insert).not.toHaveBeenCalled();
+      expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(12, {
+        status: 'Created',
+        delivery_status: null,
+        estimated_delivery_date: '2026-10-24T00:00:00.000Z',
+        persistence_status: 'PENDING',
+        notification_system_b_status: 'success',
+        floxu_code: null,
+        vbi_sale_id: 'sale-1',
+        vbi_nro_venta: '19836023',
+        last_error: null,
+      });
       expect(result).toEqual({
         uniqueKey: 'fravega:v93713051frvg-01',
         persistence_status: 'PENDING',
@@ -429,15 +496,50 @@ describe('DispatchOrders', () => {
       const result = await orchestrator.retry('fravega:v93713051frvg-01');
 
       expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(
-        expect.any(Number),
-        {
+        12,
+        expect.objectContaining({
           persistence_status: 'PENDING',
           notification_system_b_status: 'success',
           floxu_code: 'TLQV-22733',
+          vbi_sale_id: '17c6d931-5bd4-f111-84ea-70a8a59b66be',
           last_error: null,
-        },
+        }),
       );
       expect(result.persistence_status).toBe('PENDING');
+    });
+
+    it('marks CANCELLED a FAILED order that was cancelled in Fravega meanwhile', async () => {
+      persistenceRepository.findByUniqueKey.mockResolvedValue(
+        persisted('FAILED'),
+      );
+      fravegaRepository.getFullOrder.mockResolvedValue(
+        fullOrder({ status: { sellerCentral: 'Canceled', vtex: 'canceled' } }),
+      );
+
+      const result = await orchestrator.retry('fravega:v93713051frvg-01');
+
+      expect(powerAppsRepository.createSale).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        uniqueKey: 'fravega:v93713051frvg-01',
+        persistence_status: 'CANCELLED',
+        last_error:
+          '[CANCELLED] Seller Central: Canceled (entrega -), VTEX: canceled',
+      });
+    });
+
+    it('keeps it FAILED with SOURCE_ERROR when Fravega cannot be read', async () => {
+      persistenceRepository.findByUniqueKey.mockResolvedValue(
+        persisted('FAILED'),
+      );
+      fravegaRepository.getFullOrder.mockRejectedValue(new Error('VTEX 404'));
+
+      const result = await orchestrator.retry('fravega:v93713051frvg-01');
+
+      expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(12, {
+        persistence_status: 'FAILED',
+        last_error: '[SOURCE_ERROR] VTEX 404',
+      });
+      expect(result.persistence_status).toBe('FAILED');
     });
 
     it('refuses to retry an order that is not FAILED', async () => {

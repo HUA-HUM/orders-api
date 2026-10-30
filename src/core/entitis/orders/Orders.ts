@@ -50,6 +50,8 @@ export interface NormalizedOrder {
   // Total de productos sin envio: es el PRECIOVENTA de VBI
   productsAmount?: number | null;
   latestStatus: string | null;
+  // Estado de entrega RAW (Fravega: Seller Central)
+  latestDeliveryStatus?: string | null;
   customer: NormalizedOrderCustomer;
   shipping: NormalizedOrderShipping;
   items: NormalizedOrderItem[];

@@ -48,7 +48,7 @@ export function resolveFravegaLifecycle(
 
 /**
  * Update de madre para una orden que termino en Fravega, o null si sigue abierta.
- * madre no acepta CANCELLED: la cancelada queda COMPLETED y el motivo va en last_error.
+ * Entregada: COMPLETED. Cancelada o devuelta: CANCELLED, con el detalle en last_error.
  */
 export function closingStatusUpdate(
   lifecycle: FravegaOrderLifecycle,
@@ -58,7 +58,7 @@ export function closingStatusUpdate(
   }
   if (lifecycle.state === 'cancelled') {
     return {
-      persistence_status: 'COMPLETED',
+      persistence_status: 'CANCELLED',
       last_error: `[CANCELLED] ${lifecycle.detail}`,
     };
   }

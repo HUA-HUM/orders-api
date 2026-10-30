@@ -1,4 +1,21 @@
-export interface NormalizedOrderRequest {
+export type PersistenceStatus =
+  | 'PENDING'
+  | 'PROCESSED_FLOXU'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'FAILED';
+
+/* Resultado del procesamiento: madre lo acepta en el batch, asi la orden se inserta ya procesada */
+export interface OrderProcessingFields {
+  persistence_status?: PersistenceStatus;
+  notification_system_b_status?: string | null;
+  floxu_code?: string | null;
+  vbi_sale_id?: string | null;
+  vbi_nro_venta?: string | null;
+  last_error?: string | null;
+}
+
+export interface NormalizedOrderRequest extends OrderProcessingFields {
   marketplace: string;
   external_order_id: string;
   external_suborder_id?: string | null;

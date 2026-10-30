@@ -24,6 +24,7 @@ export function fravegaFullOrderToNormalized(
     productsAmount:
       typeof order.totals?.products === 'number' ? order.totals.products : null,
     latestStatus: trimOrNull(order.status?.sellerCentral),
+    latestDeliveryStatus: trimOrNull(order.status?.sellerCentralDelivery),
     customer: {
       name: trimOrNull(buyer.fullName),
       document: trimOrNull(buyer.cuil),

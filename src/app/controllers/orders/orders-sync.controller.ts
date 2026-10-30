@@ -28,10 +28,11 @@ export class OrdersSyncController {
 
   @Post('sync')
   @ApiOperation({
-    summary: 'Dispara manualmente el flujo de ordenes: madre -> VBI',
+    summary: 'Dispara manualmente el flujo de ordenes: VBI -> madre',
     description:
       'Sin parametros procesa las ordenes nuevas desde el ultimo sync. ' +
-      'Con from/to reprocesa ese rango de fechas de compra (las que ya estan en madre se saltean).',
+      'Con from/to reprocesa ese rango de fechas de compra (las que ya estan en madre se saltean). ' +
+      'Cada orden nueva se manda a VBI y despues se guarda en madre con el resultado.',
   })
   @ApiQuery({
     name: 'from',
@@ -58,8 +59,8 @@ export class OrdersSyncController {
     summary:
       'Actualiza el estado de las ordenes PENDING de madre segun Fravega',
     description:
-      'Las entregadas pasan a COMPLETED. Las canceladas o devueltas tambien quedan COMPLETED ' +
-      '(madre no acepta CANCELLED) con last_error "[CANCELLED] ...". ' +
+      'Las entregadas pasan a COMPLETED y las canceladas o devueltas a CANCELLED (detalle en last_error). ' +
+      'Actualiza status y delivery_status si cambiaron en Fravega. ' +
       'A las ya enviadas a VBI sin numero TLQV se lo completa en floxu_code (reenvio que VBI responde como duplicate).',
   })
   async statusSync() {
@@ -76,7 +77,7 @@ export class OrdersSyncController {
       'Reintenta una orden FAILED: la vuelve a consultar y la reenvia a VBI',
     description:
       'Si VBI la acepta queda PENDING (o COMPLETED si ya fue entregada). ' +
-      'Si en Fravega ya esta cancelada no se envia a VBI.',
+      'Si en Fravega ya esta cancelada no se envia a VBI y queda CANCELLED.',
   })
   @ApiParam({ name: 'suborderId', example: 'v93713051frvg-01' })
   async retry(@Param('suborderId') suborderId: string) {
