@@ -10,3 +10,10 @@ metadata:
 data:
   MARKETPLACE_API_BASE_URL: 'https://api.marketplace.loquieroaca.com'
   MADRE_API_BASE_URL: 'https://api.madre.loquieroaca.com'
+  # Crons apagados hasta que el cliente valide: pasar a 'true' para activarlos
+  ORDERS_SYNC_CRON_ENABLED: 'false'
+  ORDERS_STATUS_CRON_ENABLED: 'false'
+  # Hora de Argentina, con segundos: sync 4 veces por dia y status-sync una hora despues
+  ORDERS_SYNC_CRON: '0 0 0,6,12,18 * * *'
+  ORDERS_STATUS_CRON: '0 0 1,7,13,19 * * *'
+  ORDERS_STATUS_MAX_AGE_DAYS: '60'

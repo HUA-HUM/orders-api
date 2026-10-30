@@ -20,7 +20,8 @@ describe('OrdersInteractor', () => {
 
     fravegaRepository = {
       listOrders: jest.fn(),
-      getOrder: jest.fn(),
+      listFullOrders: jest.fn(),
+      getFullOrder: jest.fn(),
     };
 
     interactor = new OrdersInteractor(

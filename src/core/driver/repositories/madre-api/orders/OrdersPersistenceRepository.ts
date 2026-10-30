@@ -1,9 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { IOrdersPersistenceRepository } from '../../../../adapters/repositories/madre/orders/IOrdersPersistenceRepository';
-import type { NormalizedOrder } from '../../../../entitis/orders/Orders';
+import type {
+  IOrdersPersistenceRepository,
+  OrderToPersist,
+} from '../../../../adapters/repositories/madre/orders/IOrdersPersistenceRepository';
 import type {
   FindOrderResponse,
   InsertOrdersResponse,
+  PendingOrdersQuery,
+  PendingOrdersResponse,
   UpdateOrderStatusRequest,
   UpdateOrderStatusResponse,
 } from '../../../../entitis/madre-api/orders/OrdersPersistenceResponse';
@@ -19,9 +23,11 @@ export class OrdersPersistenceRepository implements IOrdersPersistenceRepository
 
   constructor(private readonly http: MadreHttpClient) {}
 
-  async insert(orders: NormalizedOrder[]): Promise<InsertOrdersResponse> {
+  async insert(orders: OrderToPersist[]): Promise<InsertOrdersResponse> {
     const path = `${OrdersPersistenceRepository.BASE_PATH}/batch`;
-    const mapped = orders.map(toNormalizedOrderRequest);
+    const mapped = orders.map(({ order, processing }) =>
+      toNormalizedOrderRequest(order, processing),
+    );
     const chunks = this.chunk(
       mapped,
       OrdersPersistenceRepository.BATCH_CHUNK_SIZE,
@@ -66,6 +72,17 @@ export class OrdersPersistenceRepository implements IOrdersPersistenceRepository
       return await this.http.get<FindOrderResponse>(path);
     } catch (error) {
       this.logError('findByUniqueKey', path, error);
+      throw error;
+    }
+  }
+
+  async findPending(query: PendingOrdersQuery): Promise<PendingOrdersResponse> {
+    const path = `${OrdersPersistenceRepository.BASE_PATH}/pending`;
+
+    try {
+      return await this.http.get<PendingOrdersResponse>(path, { ...query });
+    } catch (error) {
+      this.logError('findPending', path, error);
       throw error;
     }
   }

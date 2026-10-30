@@ -29,3 +29,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: order-api-config
+            # Valores sensibles (POWERAPPS_API_URL con la clave de Azure). Se crea a mano en el cluster:
+            # kubectl create secret generic order-api-secrets --from-literal=POWERAPPS_API_URL='...'
+            - secretRef:
+                name: order-api-secrets
+                optional: true

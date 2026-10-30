@@ -7,8 +7,11 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import type { OrdersQuery } from '../../../core/entitis/orders/Orders';
+import { Public } from '../../guards/api-key.guard';
 import { OrdersService } from '../../services/orders/orders.service';
 
+// Consultas de solo lectura que usa panel.market: no piden API key
+@Public()
 @ApiTags('orders')
 @Controller('orders')
 export class OrdersController {

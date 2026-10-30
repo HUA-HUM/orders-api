@@ -61,6 +61,19 @@ export function formatDateDmy(value?: string | null): string {
   return `${pad(date.getUTCDate())}/${pad(date.getUTCMonth() + 1)}/${date.getUTCFullYear()}`;
 }
 
+const ARGENTINA_DATE_FORMAT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'America/Argentina/Buenos_Aires',
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+});
+
+// DD/MM/YYYY en hora argentina: una compra del 12/05 a las 22:00 no pasa al 13/05
+export function formatDateDmyArgentina(value?: string | null): string {
+  const date = toDate(value);
+  return date ? ARGENTINA_DATE_FORMAT.format(date) : '';
+}
+
 function toDate(value?: string | null): Date | null {
   if (!value) {
     return null;
