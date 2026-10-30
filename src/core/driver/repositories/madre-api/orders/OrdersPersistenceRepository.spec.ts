@@ -69,7 +69,10 @@ describe('OrdersPersistenceRepository', () => {
     );
 
     expect(http.post).toHaveBeenCalledTimes(3);
-    for (const call of http.post.mock.calls) {
+    for (const call of http.post.mock.calls as [
+      string,
+      { orders: unknown[] },
+    ][]) {
       expect(call[1].orders.length).toBeLessThanOrEqual(25);
     }
     expect(result.total).toBe(60);
