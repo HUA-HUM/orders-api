@@ -52,9 +52,32 @@ describe('PowerAppsDispatchRepository', () => {
     expect(body.processId).toBe('');
     expect(result).toEqual({
       ok: true,
+      duplicate: false,
       saleId: '345',
       nroVenta: '25',
       tlqtNumber: 'TLQV-36120',
+    });
+  });
+
+  it('accepts a duplicate NROVENTA as already sent and returns the existing sale', async () => {
+    // Respuesta real de VBI al reenviar una venta (30/10)
+    respond(200, {
+      status: 'duplicate',
+      action: 'duplicate',
+      reason: 'NROVENTA_ALREADY_EXISTS',
+      saleId: '17c6d931-5bd4-f111-84ea-70a8a59b66be',
+      nroVenta: '19836023',
+      tlqtNumber: 'TLQV-22733',
+    });
+
+    const result = await new PowerAppsDispatchRepository().createSale(order);
+
+    expect(result).toEqual({
+      ok: true,
+      duplicate: true,
+      saleId: '17c6d931-5bd4-f111-84ea-70a8a59b66be',
+      nroVenta: '19836023',
+      tlqtNumber: 'TLQV-22733',
     });
   });
 

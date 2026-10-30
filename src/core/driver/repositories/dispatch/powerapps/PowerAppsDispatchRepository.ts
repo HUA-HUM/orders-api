@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type {
   IPowerAppsDispatchRepository,
   PowerAppsDispatchResult,
@@ -13,6 +13,7 @@ const PROCESS_ID = '';
 export class PowerAppsDispatchRepository implements IPowerAppsDispatchRepository {
   private static readonly TIMEOUT_MS = 30000;
   private readonly url = process.env.POWERAPPS_API_URL ?? '';
+  private readonly logger = new Logger(PowerAppsDispatchRepository.name);
 
   async createSale(order: NormalizedOrder): Promise<PowerAppsDispatchResult> {
     if (!this.url) {
@@ -31,9 +32,17 @@ export class PowerAppsDispatchRepository implements IPowerAppsDispatchRepository
 
     const text = await response.text();
     const body = this.parseBody(text);
+    // VBI puede responder 200 con { status: 'error' }. 'duplicate' (NROVENTA_ALREADY_EXISTS)
+    // significa que la venta ya existe: cuenta como enviada, VBI no crea otra
+    const duplicate = body?.status === 'duplicate';
+    const created = response.ok && (body?.status === 'success' || duplicate);
 
-    // VBI puede responder 200 con { status: 'error' }: solo cuenta como creada con status success
-    if (!response.ok || body?.status !== 'success') {
+    // Respuesta completa: madre no guarda saleId ni action, y last_error la corta a 300 caracteres
+    const logLine = `[VBI] NROVENTA=${order.orderId} HTTP ${response.status}: ${text}`;
+    if (created) {
+      this.logger.log(logLine);
+    } else {
+      this.logger.warn(logLine);
       throw new Error(
         `PowerApps respondio ${response.status}: ${text.slice(0, 300)}`,
       );
@@ -41,6 +50,7 @@ export class PowerAppsDispatchRepository implements IPowerAppsDispatchRepository
 
     return {
       ok: true,
+      duplicate,
       saleId: this.readId(body, 'saleId'),
       nroVenta: this.readId(body, 'nroVenta'),
       tlqtNumber: this.readId(body, 'tlqtNumber'),

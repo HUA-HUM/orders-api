@@ -413,6 +413,33 @@ describe('DispatchOrders', () => {
       });
     });
 
+    it('recovers an order VBI already had: duplicate leaves it PENDING with the TLQV number', async () => {
+      persistenceRepository.findByUniqueKey.mockResolvedValue(
+        persisted('FAILED'),
+      );
+      fravegaRepository.getFullOrder.mockResolvedValue(fullOrder());
+      powerAppsRepository.createSale.mockResolvedValue({
+        ok: true,
+        duplicate: true,
+        saleId: '17c6d931-5bd4-f111-84ea-70a8a59b66be',
+        nroVenta: '19836023',
+        tlqtNumber: 'TLQV-22733',
+      });
+
+      const result = await orchestrator.retry('fravega:v93713051frvg-01');
+
+      expect(persistenceRepository.updateStatus).toHaveBeenCalledWith(
+        expect.any(Number),
+        {
+          persistence_status: 'PENDING',
+          notification_system_b_status: 'success',
+          floxu_code: 'TLQV-22733',
+          last_error: null,
+        },
+      );
+      expect(result.persistence_status).toBe('PENDING');
+    });
+
     it('refuses to retry an order that is not FAILED', async () => {
       persistenceRepository.findByUniqueKey.mockResolvedValue(
         persisted('COMPLETED'),
