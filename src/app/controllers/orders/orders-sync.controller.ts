@@ -17,8 +17,9 @@ import {
 import type { DispatchRange } from '../../../core/interactor/orders/DispatchOrders';
 import { SyncOrderStatuses } from '../../../core/interactor/orders/SyncOrderStatuses';
 
+// Procesos de Frávega: cada marketplace que se sume tendra sus propias rutas
 @ApiTags('orders')
-@Controller('orders')
+@Controller('orders/fravega')
 export class OrdersSyncController {
   constructor(
     private readonly dispatchOrders: DispatchOrders,
@@ -69,7 +70,7 @@ export class OrdersSyncController {
     }
   }
 
-  @Post('retry/:uniqueKey')
+  @Post('retry/:suborderId')
   @ApiOperation({
     summary:
       'Reintenta una orden FAILED: la vuelve a consultar y la reenvia a VBI',
@@ -77,8 +78,10 @@ export class OrdersSyncController {
       'Si VBI la acepta queda PENDING (o COMPLETED si ya fue entregada). ' +
       'Si en Fravega ya esta cancelada no se envia a VBI.',
   })
-  @ApiParam({ name: 'uniqueKey', example: 'fravega:v93713051frvg-01' })
-  async retry(@Param('uniqueKey') uniqueKey: string) {
+  @ApiParam({ name: 'suborderId', example: 'v93713051frvg-01' })
+  async retry(@Param('suborderId') suborderId: string) {
+    // En madre la orden se guarda con unique_key fravega:{suborderId}
+    const uniqueKey = `fravega:${suborderId}`;
     try {
       return await this.dispatchOrders.retry(uniqueKey);
     } catch (error) {

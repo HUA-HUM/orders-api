@@ -32,7 +32,7 @@ ORDERS_SYNC_CRON_ENABLED=false
 ORDERS_STATUS_CRON_ENABLED=false
 ```
 
-### Flujo de ordenes (cron `ORDERS_SYNC_CRON`, por defecto cada 2 horas, o `POST /orders/sync`)
+### Flujo de ordenes (cron `ORDERS_SYNC_CRON`, por defecto cada 2 horas, o `POST /orders/fravega/sync`)
 
 `persistence_status` en madre sigue el estado de la orden en Fravega: `PENDING` mientras esta abierta,
 `COMPLETED` cuando se entrega o se cancela. El resultado de VBI va en `notification_system_b_status` y `floxu_code`.
@@ -45,10 +45,10 @@ ORDERS_STATUS_CRON_ENABLED=false
    con `notification_system_b_status: success` y el `tlqtNumber` en `floxu_code`. Si no, `FAILED` con `[VBI_ERROR] ...`.
 6. Las ordenes que marketplace-api no pudo completar (falla VTEX / Seller Central) quedan `FAILED` con `[SOURCE_ERROR] ...`.
 
-- `POST /orders/sync?from=...&to=...` reprocesa un rango de fechas de compra a mano.
-- `POST /orders/retry/{uniqueKey}` reintenta una orden `FAILED`.
+- `POST /orders/fravega/sync?from=...&to=...` reprocesa un rango de fechas de compra a mano.
+- `POST /orders/fravega/retry/{suborderId}` reintenta una orden `FAILED` (ej. `v93713051frvg-01`).
 
-### Estados (cron `ORDERS_STATUS_CRON`, por defecto cada hora a los :30, o `POST /orders/status-sync`)
+### Estados (cron `ORDERS_STATUS_CRON`, por defecto cada hora a los :30, o `POST /orders/fravega/status-sync`)
 
 Recorre las ordenes `PENDING` de madre (`GET /api/orders/pending`), consulta cada una en Fravega y:
 
