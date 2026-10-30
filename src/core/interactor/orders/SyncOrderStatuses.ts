@@ -35,6 +35,8 @@ export interface SyncOrderStatusesResult {
   tlqtFilled: number;
   // Pendientes de otros marketplaces: todavia no se siguen
   ignored: number;
+  // Compradas hace mas de ORDERS_STATUS_MAX_AGE_DAYS: no se revisan
+  tooOld: number;
   errors: SyncOrderStatusesError[];
 }
 
@@ -50,6 +52,8 @@ export class SyncOrderStatuses {
   private static readonly PAGE_LIMIT = 200;
   private static readonly MAX_PAGES = 50;
   private static readonly CONCURRENCY = 5;
+  // Una devolucion puede llegar despues de facturar (hasta ~5 semanas) + entrega + 10 dias de arrepentimiento
+  private static readonly DEFAULT_MAX_AGE_DAYS = 60;
   private readonly logger = new Logger(SyncOrderStatuses.name);
 
   constructor(
@@ -71,16 +75,26 @@ export class SyncOrderStatuses {
         open: 0,
         tlqtFilled: 0,
         ignored: 0,
+        tooOld: 0,
         errors: [],
       };
 
       const pending = await this.loadPending();
 
-      const fravega = pending.filter(
+      const trackable = pending.filter(
         (order) =>
           order.marketplace === 'fravega' && order.external_suborder_id,
       );
-      result.ignored = pending.length - fravega.length;
+      result.ignored = pending.length - trackable.length;
+
+      // Sin fecha de compra se revisa igual
+      const since = Date.now() - this.maxAgeDays() * 24 * 60 * 60 * 1000;
+      const fravega = trackable.filter(
+        (order) =>
+          !order.purchase_date ||
+          new Date(order.purchase_date).getTime() >= since,
+      );
+      result.tooOld = trackable.length - fravega.length;
 
       for (let i = 0; i < fravega.length; i += SyncOrderStatuses.CONCURRENCY) {
         await Promise.all(
@@ -91,10 +105,27 @@ export class SyncOrderStatuses {
       }
 
       this.logger.log(
-        `[status-sync] checked=${result.checked} delivered=${result.delivered} cancelled=${result.cancelled} open=${result.open} tlqtFilled=${result.tlqtFilled} errors=${result.errors.length}`,
+        `[status-sync] checked=${result.checked} delivered=${result.delivered} cancelled=${result.cancelled} open=${result.open} tlqtFilled=${result.tlqtFilled} tooOld=${result.tooOld} errors=${result.errors.length}`,
       );
       return result;
     });
+  }
+
+  /* ORDERS_STATUS_MAX_AGE_DAYS: dias desde la compra en los que se sigue revisando una orden */
+  private maxAgeDays(): number {
+    const raw = process.env.ORDERS_STATUS_MAX_AGE_DAYS;
+    if (raw === undefined || raw.trim() === '') {
+      return SyncOrderStatuses.DEFAULT_MAX_AGE_DAYS;
+    }
+
+    const days = Number(raw);
+    if (!Number.isInteger(days) || days <= 0) {
+      this.logger.error(
+        `ORDERS_STATUS_MAX_AGE_DAYS invalido ("${raw}"): se usan ${SyncOrderStatuses.DEFAULT_MAX_AGE_DAYS} dias`,
+      );
+      return SyncOrderStatuses.DEFAULT_MAX_AGE_DAYS;
+    }
+    return days;
   }
 
   /* Todas las PENDING de Fravega, pagina por pagina */

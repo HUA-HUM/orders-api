@@ -69,6 +69,7 @@ export class OrdersSyncController {
     description:
       'Las entregadas pasan a COMPLETED y las canceladas o devueltas a CANCELLED (detalle en last_error). ' +
       'Actualiza status y delivery_status si cambiaron en Fravega. ' +
+      'Solo revisa las compradas en los ultimos ORDERS_STATUS_MAX_AGE_DAYS dias (60 por defecto). ' +
       'A las ya enviadas a VBI sin numero TLQV se lo completa en floxu_code (reenvio que VBI responde como duplicate).',
   })
   async statusSync() {

@@ -31,6 +31,8 @@ API_KEY=
 # false: no corre ese cron (los endpoints manuales siguen andando). Sin valor corren.
 ORDERS_SYNC_CRON_ENABLED=false
 ORDERS_STATUS_CRON_ENABLED=false
+# Dias desde la compra en los que el proceso de estados sigue revisando una orden. Sin valor: 60.
+ORDERS_STATUS_MAX_AGE_DAYS=60
 ```
 
 ### Flujo de ordenes (cron `ORDERS_SYNC_CRON`, por defecto cada 2 horas, o `POST /orders/fravega/sync`)
@@ -68,6 +70,10 @@ Recorre las ordenes `PENDING` de Fravega en madre (`GET /api/orders/pending`, de
 - el resto sigue `PENDING`.
 
 En todas actualiza `status` y `delivery_status` si cambiaron en Fravega.
+
+Solo revisa las compradas en los ultimos `ORDERS_STATUS_MAX_AGE_DAYS` dias (60 por defecto): una devolucion puede
+llegar despues de facturar (hasta ~5 semanas despues de la compra), la entrega y los 10 dias de arrepentimiento.
+Las mas viejas quedan `PENDING` sin revisar (en la respuesta, `tooOld`); se ven con `GET /api/orders` de madre.
 
 Ademas completa el numero TLQV (`floxu_code`): VBI lo asigna despues de crear la venta, asi que en el primer
 envio suele venir vacio. A las ordenes `PENDING` con `notification_system_b_status: success` y sin `floxu_code`

@@ -123,6 +123,7 @@ describe('SyncOrderStatuses', () => {
       open: 1,
       tlqtFilled: 0,
       ignored: 1,
+      tooOld: 0,
       errors: [],
     });
   });
@@ -327,6 +328,74 @@ describe('SyncOrderStatuses', () => {
       { uniqueKey: 'fravega:v1frvg-01', message: 'VTEX 500' },
     ]);
     expect(result.cancelled).toBe(1);
+  });
+
+  describe('max age', () => {
+    const originalMaxAge = process.env.ORDERS_STATUS_MAX_AGE_DAYS;
+    const daysAgo = (days: number) =>
+      new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    beforeEach(() => {
+      persistenceRepository.findPending.mockResolvedValue({
+        items: [
+          pendingOrder(1, 'v1frvg-01', 'fravega', {
+            purchase_date: daysAgo(5),
+          }),
+          pendingOrder(2, 'v2frvg-01', 'fravega', {
+            purchase_date: daysAgo(45),
+          }),
+          pendingOrder(3, 'v3frvg-01', 'fravega', {
+            purchase_date: daysAgo(61),
+          }),
+          pendingOrder(4, 'v4frvg-01', 'fravega', { purchase_date: null }),
+        ],
+      });
+      fravegaRepository.getFullOrder.mockResolvedValue(
+        fravegaStatus('Created', 'Pending'),
+      );
+    });
+
+    afterEach(() => {
+      // Asignar undefined a process.env guarda el texto "undefined"
+      if (originalMaxAge === undefined)
+        delete process.env.ORDERS_STATUS_MAX_AGE_DAYS;
+      else process.env.ORDERS_STATUS_MAX_AGE_DAYS = originalMaxAge;
+    });
+
+    const checkedSuborders = () =>
+      fravegaRepository.getFullOrder.mock.calls.map(
+        (call) => (call as [string])[0],
+      );
+
+    it('by default only checks orders bought in the last 60 days (and those without date)', async () => {
+      delete process.env.ORDERS_STATUS_MAX_AGE_DAYS;
+
+      const result = await sync.run();
+
+      expect(checkedSuborders()).toEqual([
+        'v1frvg-01',
+        'v2frvg-01',
+        'v4frvg-01',
+      ]);
+      expect(result).toMatchObject({ checked: 3, tooOld: 1 });
+    });
+
+    it('uses ORDERS_STATUS_MAX_AGE_DAYS', async () => {
+      process.env.ORDERS_STATUS_MAX_AGE_DAYS = '30';
+
+      const result = await sync.run();
+
+      expect(checkedSuborders()).toEqual(['v1frvg-01', 'v4frvg-01']);
+      expect(result.tooOld).toBe(2);
+    });
+
+    it('falls back to 60 days when the value is invalid', async () => {
+      process.env.ORDERS_STATUS_MAX_AGE_DAYS = '0';
+
+      const result = await sync.run();
+
+      expect(result.tooOld).toBe(1);
+    });
   });
 
   it('does not run while another orders process holds the lock', async () => {

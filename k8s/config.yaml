@@ -8,7 +8,8 @@ metadata:
     app.kubernetes.io/component: api
     app.kubernetes.io/part-of: order-api
 data:
-  MARKETPOWERAPPS_API_URLPLACE_API_BASE_URL: 'https://api.marketplace.loquieroaca.com'
+  MARKETPLACE_API_BASE_URL: 'https://api.marketplace.loquieroaca.com'
   MADRE_API_BASE_URL: 'https://api.madre.loquieroaca.com'
   ORDERS_SYNC_CRON_ENABLED: 'true'
   ORDERS_STATUS_CRON_ENABLED: 'true'
+  ORDERS_STATUS_MAX_AGE_DAYS: '60'
