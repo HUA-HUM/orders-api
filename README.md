@@ -58,6 +58,8 @@ y pagina `/pending`: con una version anterior madre descarta esos campos y las o
 Deployar madre-api antes que orders-api.
 
 - `POST /orders/fravega/sync?from=...&to=...` reprocesa un rango de fechas de compra a mano.
+  `from` / `to` van en UTC. Seller Central filtra por la hora argentina de la compra (ignora la zona horaria),
+  asi que orders-api le resta 3 horas al rango antes de pedirlo.
 - `POST /orders/fravega/retry/{suborderId}` reintenta una orden `FAILED` (ej. `v93713051frvg-01`).
 
 ### Estados (cron `ORDERS_STATUS_CRON`, por defecto cada hora a los :30, o `POST /orders/fravega/status-sync`)
