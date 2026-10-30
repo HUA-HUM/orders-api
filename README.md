@@ -8,12 +8,12 @@ API de ordenes de marketplaces construida con NestJS.
 
 - Node.js 20
 - npm
-- acceso de red a `https://api.marketplace.loquieroaca.com`
+- acceso de red a marketplace-api y madre-api
 - archivo `.env` con:
 
 ```env
-MARKETPLACE_API_BASE_URL=https://api.marketplace.loquieroaca.com
-MADRE_API_BASE_URL=https://api.madre.loquieroaca.com
+MARKETPLACE_API_BASE_URL=<url de marketplace-api>
+MADRE_API_BASE_URL=<url de madre-api>
 # URL completa de VBI (Azure external-sale-create) con ?code=... No commitear el valor.
 # Vacia: el envio a VBI falla y las ordenes quedan FAILED [VBI_ERROR].
 POWERAPPS_API_URL=
