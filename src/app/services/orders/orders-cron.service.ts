@@ -37,15 +37,16 @@ export class OrdersCronService implements OnModuleInit {
     this.register({
       name: 'orders-sync',
       scheduleEnv: 'ORDERS_SYNC_CRON',
-      defaultSchedule: '0 0 */2 * * *',
+      // 4 veces por dia: 00, 06, 12 y 18 hs
+      defaultSchedule: '0 0 0,6,12,18 * * *',
       enabledEnv: 'ORDERS_SYNC_CRON_ENABLED',
       run: () => this.dispatchOrders.run(),
     });
     this.register({
       name: 'orders-status-sync',
       scheduleEnv: 'ORDERS_STATUS_CRON',
-      // A la media hora, para no chocar con el sync
-      defaultSchedule: '0 30 * * * *',
+      // Una hora despues de cada sync: 01, 07, 13 y 19 hs
+      defaultSchedule: '0 0 1,7,13,19 * * *',
       enabledEnv: 'ORDERS_STATUS_CRON_ENABLED',
       run: () => this.syncOrderStatuses.run(),
     });

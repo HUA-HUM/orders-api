@@ -23,22 +23,22 @@ TEAMS_WEBHOOK_URL=
 # Crons (hora de Argentina). Expresion con segundos: "seg min hora dia mes diaSemana".
 # Sin valor usan el horario por defecto; si la expresion es invalida se loguea un error y tambien.
 # Los comentarios van en su propia linea: el .env no admite comentarios al final del valor.
-# Por defecto: cada 2 horas en punto
-ORDERS_SYNC_CRON=0 0 */2 * * *
-# Por defecto: cada hora a los :30
-ORDERS_STATUS_CRON=0 30 * * * *
+# Por defecto: 4 veces por dia (00, 06, 12 y 18 hs)
+ORDERS_SYNC_CRON=0 0 0,6,12,18 * * *
+# Por defecto: una hora despues de cada sync (01, 07, 13 y 19 hs)
+ORDERS_STATUS_CRON=0 0 1,7,13,19 * * *
 # Header x-api-key que exigen los POST /orders/fravega/* (en Swagger: boton Authorize).
 # Las consultas GET (las que usa panel.market) no la piden. Sin valor los POST responden 500.
 # Los crons no la necesitan.
 API_KEY=
 # false: no corre ese cron (los endpoints manuales siguen andando). Sin valor corren.
-ORDERS_SYNC_CRON_ENABLED=false
-ORDERS_STATUS_CRON_ENABLED=false
+ORDERS_SYNC_CRON_ENABLED=true
+ORDERS_STATUS_CRON_ENABLED=true
 # Dias desde la compra en los que el proceso de estados sigue revisando una orden. Sin valor: 60.
 ORDERS_STATUS_MAX_AGE_DAYS=60
 ```
 
-### Flujo de ordenes (cron `ORDERS_SYNC_CRON`, por defecto cada 2 horas, o `POST /orders/fravega/sync`)
+### Flujo de ordenes (cron `ORDERS_SYNC_CRON`, por defecto a las 00, 06, 12 y 18 hs, o `POST /orders/fravega/sync`)
 
 `persistence_status` en madre sigue el estado de la orden en Fravega: `PENDING` mientras esta abierta,
 `COMPLETED` cuando se entrega y `CANCELLED` cuando se cancela o se devuelve. El resultado de VBI va en
@@ -65,7 +65,7 @@ Deployar madre-api antes que orders-api.
   asi que orders-api le resta 3 horas al rango antes de pedirlo.
 - `POST /orders/fravega/retry/{suborderId}` reintenta una orden `FAILED` (ej. `v93713051frvg-01`).
 
-### Estados (cron `ORDERS_STATUS_CRON`, por defecto cada hora a los :30, o `POST /orders/fravega/status-sync`)
+### Estados (cron `ORDERS_STATUS_CRON`, por defecto a las 01, 07, 13 y 19 hs, o `POST /orders/fravega/status-sync`)
 
 Recorre las ordenes `PENDING` de Fravega en madre (`GET /api/orders/pending`, de a 200), consulta cada una en Fravega y:
 

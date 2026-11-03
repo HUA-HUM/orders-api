@@ -41,8 +41,8 @@ describe('OrdersCronService', () => {
   it('uses the default schedules when nothing is configured', () => {
     service.onModuleInit();
 
-    expect(scheduleOf('orders-sync')).toBe('0 0 */2 * * *');
-    expect(scheduleOf('orders-status-sync')).toBe('0 30 * * * *');
+    expect(scheduleOf('orders-sync')).toBe('0 0 0,6,12,18 * * *');
+    expect(scheduleOf('orders-status-sync')).toBe('0 0 1,7,13,19 * * *');
   });
 
   it('uses the schedules from the environment', () => {
@@ -60,7 +60,7 @@ describe('OrdersCronService', () => {
 
     service.onModuleInit();
 
-    expect(scheduleOf('orders-sync')).toBe('0 0 */2 * * *');
+    expect(scheduleOf('orders-sync')).toBe('0 0 0,6,12,18 * * *');
   });
 
   it('does not register a cron disabled with false', () => {
