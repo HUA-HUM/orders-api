@@ -17,6 +17,9 @@ MADRE_API_BASE_URL=<url de madre-api>
 # URL completa de VBI (Azure external-sale-create) con ?code=... No commitear el valor.
 # Vacia: el envio a VBI falla y las ordenes quedan FAILED [VBI_ERROR].
 POWERAPPS_API_URL=
+# Flujo de Power Automate que publica en el canal de Teams cada orden nueva guardada en madre
+# (lleva la firma ?sig=... No commitear el valor). Vacia: no se notifica y el resto sigue igual.
+TEAMS_WEBHOOK_URL=
 # Crons (hora de Argentina). Expresion con segundos: "seg min hora dia mes diaSemana".
 # Sin valor usan el horario por defecto; si la expresion es invalida se loguea un error y tambien.
 # Los comentarios van en su propia linea: el .env no admite comentarios al final del valor.
@@ -114,13 +117,14 @@ docker compose up --build
 
 Los manifests viven en `k8s/`.
 
-`POWERAPPS_API_URL` (lleva la clave de Azure, `?code=...`) y `API_KEY` no van en `config.yaml` sino en el Secret
+`POWERAPPS_API_URL` (lleva la clave de Azure, `?code=...`), `TEAMS_WEBHOOK_URL` (lleva la firma `sig=...`) y `API_KEY` no van en `config.yaml` sino en el Secret
 `order-api-secrets`, que se crea una vez a mano en el cluster (no esta en el repo):
 
 ```bash
 kubectl create secret generic order-api-secrets \
   --from-literal=POWERAPPS_API_URL='https://...azurewebsites.net/api/external-sale-create?code=...' \
-  --from-literal=API_KEY='...'
+  --from-literal=API_KEY='...' \
+  --from-literal=TEAMS_WEBHOOK_URL='https://...powerplatform.com/powerautomate/...&sig=...'
 kubectl rollout restart deployment/order-api   # para que el pod tome el valor
 ```
 

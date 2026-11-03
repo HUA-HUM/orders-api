@@ -6,6 +6,7 @@ import {
 import { OrdersProcessLock } from './OrdersProcessLock';
 import type { IGetFravegaOrdersRepository } from '../../adapters/repositories/marketplace/fravega/orders/IGetFravegaOrdersRepository';
 import type { IPowerAppsDispatchRepository } from '../../adapters/repositories/dispatch/powerapps/IPowerAppsDispatchRepository';
+import type { ITeamsNotificationRepository } from '../../adapters/repositories/notification/teams/ITeamsNotificationRepository';
 import type {
   IOrdersPersistenceRepository,
   OrderToPersist,
@@ -24,6 +25,7 @@ describe('DispatchOrders', () => {
     getFullOrder: jest.Mock;
   };
   let powerAppsRepository: { createSale: jest.Mock };
+  let teamsRepository: { notifyOrder: jest.Mock };
   let persistenceRepository: {
     insert: jest.Mock;
     findByUniqueKey: jest.Mock;
@@ -100,6 +102,7 @@ describe('DispatchOrders', () => {
       getFullOrder: jest.fn(),
     };
     powerAppsRepository = { createSale: jest.fn() };
+    teamsRepository = { notifyOrder: jest.fn().mockResolvedValue(undefined) };
     persistenceRepository = {
       insert: jest.fn().mockResolvedValue({ inserted: 1, skipped: 0 }),
       findByUniqueKey: jest.fn(),
@@ -110,7 +113,85 @@ describe('DispatchOrders', () => {
       powerAppsRepository as unknown as IPowerAppsDispatchRepository,
       persistenceRepository as unknown as IOrdersPersistenceRepository,
       new OrdersProcessLock(),
+      teamsRepository as unknown as ITeamsNotificationRepository,
     );
+  });
+
+  describe('teams notification', () => {
+    const vbiSale = {
+      ok: true,
+      duplicate: false,
+      saleId: '1',
+      nroVenta: '19836023',
+      tlqtNumber: 'TLQV-36120',
+    };
+
+    it('notifies Teams after the new order is saved in madre', async () => {
+      fravegaRepository.listFullOrders.mockResolvedValue(page([fullOrder()]));
+      notInMadre();
+      powerAppsRepository.createSale.mockResolvedValue(vbiSale);
+
+      await orchestrator.run();
+
+      expect(teamsRepository.notifyOrder).toHaveBeenCalledTimes(1);
+      expect(
+        persistenceRepository.insert.mock.invocationCallOrder[0],
+      ).toBeLessThan(teamsRepository.notifyOrder.mock.invocationCallOrder[0]);
+      expect(teamsRepository.notifyOrder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          marketplace: 'fravega',
+          orderId: '19836023',
+          suborderId: 'v93713051frvg-01',
+          estado: 'PENDING',
+          cliente: 'Gabriela Hidalgo',
+          producto: 'Alforja',
+          tlqv: 'TLQV-36120',
+          error: null,
+        }),
+      );
+    });
+
+    it('also notifies FAILED orders with the error', async () => {
+      fravegaRepository.listFullOrders.mockResolvedValue(
+        page([fullOrder({ buyer: { ...fullOrder().buyer, email: null } })]),
+      );
+      notInMadre();
+
+      await orchestrator.run();
+
+      expect(teamsRepository.notifyOrder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          estado: 'FAILED',
+          error: expect.stringContaining('[MISSING_DATA]') as unknown,
+        }),
+      );
+    });
+
+    it('does not notify orders already in madre or that could not be saved', async () => {
+      fravegaRepository.listFullOrders.mockResolvedValue(
+        page([fullOrder(), fullOrder({ suborderId: 'otra-01' })]),
+      );
+      persistenceRepository.findByUniqueKey
+        .mockResolvedValueOnce({ exists: true, order: null })
+        .mockResolvedValueOnce({ exists: false, order: null });
+      powerAppsRepository.createSale.mockResolvedValue(vbiSale);
+      persistenceRepository.insert.mockRejectedValue(new Error('madre caida'));
+
+      await orchestrator.run();
+
+      expect(teamsRepository.notifyOrder).not.toHaveBeenCalled();
+    });
+
+    it('keeps the result unchanged when Teams fails', async () => {
+      fravegaRepository.listFullOrders.mockResolvedValue(page([fullOrder()]));
+      notInMadre();
+      powerAppsRepository.createSale.mockResolvedValue(vbiSale);
+      teamsRepository.notifyOrder.mockRejectedValue(new Error('Teams 500'));
+
+      const result = await orchestrator.run();
+
+      expect(result).toMatchObject({ dispatched: 1, failed: 0, errors: [] });
+    });
   });
 
   it('sends a new order to VBI first and then inserts it in madre already processed, PENDING while open', async () => {

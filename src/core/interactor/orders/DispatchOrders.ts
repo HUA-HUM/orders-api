@@ -8,6 +8,8 @@ import type {
   IPowerAppsDispatchRepository,
   PowerAppsDispatchResult,
 } from '../../adapters/repositories/dispatch/powerapps/IPowerAppsDispatchRepository';
+import { I_TEAMS_NOTIFICATION_REPOSITORY } from '../../adapters/repositories/notification/teams/ITeamsNotificationRepository';
+import type { ITeamsNotificationRepository } from '../../adapters/repositories/notification/teams/ITeamsNotificationRepository';
 import type {
   FravegaFullOrderError,
   FravegaFullOrderResponse,
@@ -24,6 +26,7 @@ import {
   findMissingDispatchFields,
 } from '../../entitis/orders/Orders';
 import { fravegaFullOrderToNormalized } from './mappers/fravegaFullOrderToNormalized';
+import { toTeamsOrderPayload } from './mappers/toTeamsOrderPayload';
 import {
   closingStatusUpdate,
   resolveFravegaLifecycle,
@@ -112,6 +115,8 @@ export class DispatchOrders {
     @Inject(I_ORDERS_PERSISTENCE_REPOSITORY)
     private readonly ordersPersistenceRepository: IOrdersPersistenceRepository,
     private readonly lock: OrdersProcessLock,
+    @Inject(I_TEAMS_NOTIFICATION_REPOSITORY)
+    private readonly teamsRepository: ITeamsNotificationRepository,
   ) {}
 
   /**
@@ -457,6 +462,23 @@ export class DispatchOrders {
     }
 
     this.tally(evaluation, order.orderId, result);
+    await this.notifyTeams(order, evaluation);
+  }
+
+  /* Avisa al canal de Teams que entro una orden. Best-effort: si falla solo se loguea */
+  private async notifyTeams(
+    order: NormalizedOrder,
+    evaluation: DispatchEvaluation,
+  ): Promise<void> {
+    try {
+      await this.teamsRepository.notifyOrder(
+        toTeamsOrderPayload(order, evaluation.fields),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `[teams ${order.orderId}] no se pudo notificar: ${this.msg(error)}`,
+      );
+    }
   }
 
   private tally(
