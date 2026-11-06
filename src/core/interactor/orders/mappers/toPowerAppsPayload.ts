@@ -5,6 +5,9 @@ import {
   joinParts,
 } from './fieldHelpers';
 
+// Toda orden entra a VBI: lo que falte va con este valor, no se inventa ni se frena la venta
+export const VALUE_NOT_FOUND = 'no-encontrado';
+
 export function toPowerAppsPayload(
   order: NormalizedOrder,
 ): Record<string, string | number> {
@@ -23,12 +26,12 @@ export function toPowerAppsPayload(
     'Cantidad de Unidades': item?.quantity ?? '',
     TIPOVENTA: order.marketplace.toUpperCase(),
     PRECIOVENTA: order.productsAmount ?? order.amount ?? '',
-    CUITCOMPRADOR: order.customer.document ?? '',
+    CUITCOMPRADOR: order.customer.document ?? VALUE_NOT_FOUND,
     NOMBREDESTINATARIO: order.customer.name ?? '',
     'Datos Cliente':
       joinParts(order.shipping.address, order.shipping.receiverName) ?? '',
     TELEFONO: order.customer.phone ?? '',
-    EMAIL: order.customer.email ?? '',
+    EMAIL: order.customer.email ?? VALUE_NOT_FOUND,
     CIUDAD: order.shipping.city ?? '',
     PROVINCIA: order.shipping.province ?? '',
     'CODIGO POSTAL': order.shipping.zipCode ?? '',
