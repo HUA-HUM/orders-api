@@ -47,7 +47,8 @@ ORDERS_STATUS_MAX_AGE_DAYS=60
 1. Trae las ordenes nuevas de Fravega desde marketplace-api (`/fravega/full-orders`), desde el ultimo sync.
 2. Las que ya existen en madre se saltean.
 3. Si ya esta cancelada o devuelta en Fravega no se envia a VBI: queda `CANCELLED` con el detalle en `last_error`.
-4. Si falta el CUIL o el email del comprador queda `FAILED` con `last_error` `[MISSING_DATA] ...`.
+4. Ninguna orden se frena por datos del comprador. En `CUITCOMPRADOR` va el CUIL/CUIT; si Fravega no lo trae, el DNI; si tampoco, `no-encontrado`
+   (en madre `customer_document` queda `null`). En `EMAIL` va el email de Seller Central; si falta, `no-encontrado`.
 5. La envia a VBI: si responde `success` (o `duplicate`) queda `PENDING` (o `COMPLETED` si ya fue entregada),
    con `notification_system_b_status: success`. Si no, `FAILED` con `[VBI_ERROR] ...`.
 6. Las ordenes que marketplace-api no pudo completar (falla VTEX / Seller Central) quedan `FAILED` con `[SOURCE_ERROR] ...`.

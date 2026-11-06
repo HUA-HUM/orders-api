@@ -72,22 +72,6 @@ export function emptyShipping(): NormalizedOrderShipping {
   };
 }
 
-export const REQUIRED_DISPATCH_FIELDS = [
-  'document',
-  'email',
-] as const satisfies readonly (keyof NormalizedOrderCustomer)[];
-
-// VTEX enmascara el email del comprador: no sirve para VBI
-const MASKED_EMAIL_DOMAIN = '@ct.vtex.com.br';
-
-export function findMissingDispatchFields(order: NormalizedOrder): string[] {
-  return REQUIRED_DISPATCH_FIELDS.filter((field) => {
-    const value = order.customer[field];
-    if (!value) return true;
-    return field === 'email' && value.endsWith(MASKED_EMAIL_DOMAIN);
-  });
-}
-
 export interface MarketplaceOrdersResponse {
   marketplace: MarketplaceName;
   range: OrdersRange;

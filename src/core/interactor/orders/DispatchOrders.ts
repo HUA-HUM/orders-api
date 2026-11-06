@@ -20,11 +20,7 @@ import type {
 } from '../../entitis/madre-api/orders/NormalizedOrderRequest';
 import type { UpdateOrderStatusRequest } from '../../entitis/madre-api/orders/OrdersPersistenceResponse';
 import type { NormalizedOrder } from '../../entitis/orders/Orders';
-import {
-  emptyCustomer,
-  emptyShipping,
-  findMissingDispatchFields,
-} from '../../entitis/orders/Orders';
+import { emptyCustomer, emptyShipping } from '../../entitis/orders/Orders';
 import { fravegaFullOrderToNormalized } from './mappers/fravegaFullOrderToNormalized';
 import { toTeamsOrderPayload } from './mappers/toTeamsOrderPayload';
 import {
@@ -35,18 +31,10 @@ import { OrdersProcessLock } from './OrdersProcessLock';
 
 export { DispatchInProgressError } from './OrdersProcessLock';
 
-type DispatchStage =
-  | 'collect'
-  | 'source'
-  | 'validate'
-  | 'powerapps'
-  | 'persist';
+type DispatchStage = 'collect' | 'source' | 'powerapps' | 'persist';
 
-/* Motivo del FAILED: va como prefijo de last_error ([MISSING_DATA] ...) */
-export type DispatchFailureReason =
-  | 'SOURCE_ERROR'
-  | 'MISSING_DATA'
-  | 'VBI_ERROR';
+/* Motivo del FAILED: va como prefijo de last_error ([VBI_ERROR] ...) */
+export type DispatchFailureReason = 'SOURCE_ERROR' | 'VBI_ERROR';
 
 export interface DispatchRange {
   from: string;
@@ -370,15 +358,6 @@ export class DispatchOrders {
           last_error: closingStatusUpdate(lifecycle)?.last_error ?? null,
         },
       };
-    }
-
-    const missing = findMissingDispatchFields(order);
-    if (missing.length > 0) {
-      return this.failure(
-        'MISSING_DATA',
-        `Faltan datos del comprador: ${missing.join(', ')}`,
-        'validate',
-      );
     }
 
     let sale: PowerAppsDispatchResult;

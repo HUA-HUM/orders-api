@@ -27,7 +27,8 @@ export function fravegaFullOrderToNormalized(
     latestDeliveryStatus: trimOrNull(order.status?.sellerCentralDelivery),
     customer: {
       name: trimOrNull(buyer.fullName),
-      document: trimOrNull(buyer.cuil),
+      // CUIL/CUIT y, si Fravega no lo trae, el DNI de respaldo
+      document: trimOrNull(buyer.cuil) ?? trimOrNull(buyer.documentNumber),
       phone: normalizePhone(buyer.phone),
       email: trimOrNull(buyer.email),
     },

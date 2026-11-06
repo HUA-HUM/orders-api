@@ -152,17 +152,16 @@ describe('DispatchOrders', () => {
     });
 
     it('also notifies FAILED orders with the error', async () => {
-      fravegaRepository.listFullOrders.mockResolvedValue(
-        page([fullOrder({ buyer: { ...fullOrder().buyer, email: null } })]),
-      );
+      fravegaRepository.listFullOrders.mockResolvedValue(page([fullOrder()]));
       notInMadre();
+      powerAppsRepository.createSale.mockRejectedValue(new Error('VBI caido'));
 
       await orchestrator.run();
 
       expect(teamsRepository.notifyOrder).toHaveBeenCalledWith(
         expect.objectContaining({
           estado: 'FAILED',
-          error: expect.stringContaining('[MISSING_DATA]') as unknown,
+          error: expect.stringContaining('[VBI_ERROR]') as unknown,
         }),
       );
     });
@@ -319,39 +318,51 @@ describe('DispatchOrders', () => {
     });
   });
 
-  it('inserts FAILED with MISSING_DATA when cuil is missing and does not call VBI', async () => {
+  it('sends the DNI to VBI when cuil is missing', async () => {
     fravegaRepository.listFullOrders.mockResolvedValue(
       page([fullOrder({ buyer: { ...fullOrder().buyer, cuil: '' } })]),
     );
     notInMadre();
+    powerAppsRepository.createSale.mockResolvedValue({
+      ok: true,
+      duplicate: false,
+      saleId: '1',
+      nroVenta: '19836023',
+      tlqtNumber: 'TLQV-36120',
+    });
 
     const result = await orchestrator.run();
 
-    expect(powerAppsRepository.createSale).not.toHaveBeenCalled();
-    expect(inserted().processing).toEqual({
-      persistence_status: 'FAILED',
-      last_error: '[MISSING_DATA] Faltan datos del comprador: document',
+    expect(powerAppsRepository.createSale).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customer: expect.objectContaining({ document: '25327587' }) as unknown,
+      }),
+    );
+    expect(inserted().processing).toMatchObject({
+      persistence_status: 'PENDING',
+      last_error: null,
     });
-    expect(result.failed).toBe(1);
+    expect(result.dispatched).toBe(1);
   });
 
-  it('treats the masked VTEX email as missing', async () => {
+  it('sends the order to VBI when the email is missing', async () => {
     fravegaRepository.listFullOrders.mockResolvedValue(
-      page([
-        fullOrder({
-          buyer: { ...fullOrder().buyer, email: 'abc123@ct.vtex.com.br' },
-        }),
-      ]),
+      page([fullOrder({ buyer: { ...fullOrder().buyer, email: null } })]),
     );
     notInMadre();
-
-    await orchestrator.run();
-
-    expect(powerAppsRepository.createSale).not.toHaveBeenCalled();
-    expect(inserted().processing).toMatchObject({
-      persistence_status: 'FAILED',
-      last_error: '[MISSING_DATA] Faltan datos del comprador: email',
+    powerAppsRepository.createSale.mockResolvedValue({
+      ok: true,
+      duplicate: false,
+      saleId: '1',
+      nroVenta: '19836023',
+      tlqtNumber: 'TLQV-36120',
     });
+
+    const result = await orchestrator.run();
+
+    expect(powerAppsRepository.createSale).toHaveBeenCalledTimes(1);
+    expect(result.dispatched).toBe(1);
+    expect(result.failed).toBe(0);
   });
 
   it('inserts FAILED with VBI_ERROR when VBI rejects the sale', async () => {
