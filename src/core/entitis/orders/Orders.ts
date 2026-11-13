@@ -55,6 +55,8 @@ export interface NormalizedOrder {
   customer: NormalizedOrderCustomer;
   shipping: NormalizedOrderShipping;
   items: NormalizedOrderItem[];
+  // Avisos sobre datos incompletos (ej. entro sin email porque fallo Seller Central). Van a Teams
+  warnings?: string[];
   raw: unknown;
 }
 

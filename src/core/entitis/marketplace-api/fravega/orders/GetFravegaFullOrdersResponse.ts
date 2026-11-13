@@ -43,6 +43,16 @@ export interface FravegaFullOrderResponse {
   shipping?: FravegaFullOrderShipping;
   items?: FravegaFullOrderItem[];
   totals?: { products?: number | null; total?: number | null };
+  /**
+   * complete: detalle de Seller Central + VTEX.
+   * fallback: el detalle de Seller Central por suborden fallo y marketplace-api la armo con el
+   * listado de Seller Central + VTEX (sin email). Ausente en versiones viejas de marketplace-api.
+   */
+  source?: 'complete' | 'fallback';
+  // Datos del comprador que no se pudieron obtener (ej. ['email'])
+  missing?: string[];
+  // Solo en fallback: error de Seller Central que lo provoco
+  fallbackReason?: string;
   [key: string]: unknown;
 }
 

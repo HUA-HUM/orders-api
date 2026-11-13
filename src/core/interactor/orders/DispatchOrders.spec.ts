@@ -181,6 +181,61 @@ describe('DispatchOrders', () => {
       expect(teamsRepository.notifyOrder).not.toHaveBeenCalled();
     });
 
+    it('dispatches a fallback order (no Seller Central detail) and warns Teams that it has no email', async () => {
+      fravegaRepository.listFullOrders.mockResolvedValue(
+        page([
+          fullOrder({
+            source: 'fallback',
+            missing: ['email'],
+            fallbackReason: '[FRAVEGA GET] → 500',
+            buyer: { ...fullOrder().buyer, email: null },
+          }),
+        ]),
+      );
+      notInMadre();
+      powerAppsRepository.createSale.mockResolvedValue(vbiSale);
+
+      const result = await orchestrator.run();
+
+      expect(result).toMatchObject({ dispatched: 1, failed: 0 });
+      expect(sentToVbi().customer.email).toBeNull();
+      expect(teamsRepository.notifyOrder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          estado: 'PENDING',
+          aviso: expect.stringContaining('sin email') as unknown,
+          mensaje: expect.stringContaining(
+            '⚠️ Nueva orden FRAVEGA #19836023 (PENDING) con datos incompletos',
+          ) as unknown,
+        }),
+      );
+    });
+
+    it('warns Teams that an order did not enter VBI when Fravega could not be read', async () => {
+      fravegaRepository.listFullOrders.mockResolvedValue({
+        ...page([]),
+        errors: [
+          {
+            orderId: 20277852,
+            suborderId: 'v95020273frvg-01',
+            source: 'seller-central',
+            message: '[FRAVEGA GET] → 500',
+          },
+        ],
+      });
+      notInMadre();
+
+      await orchestrator.run();
+
+      expect(teamsRepository.notifyOrder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          estado: 'FAILED',
+          mensaje: expect.stringContaining(
+            '🔴 Orden FRAVEGA #20277852 NO entro a VBI (FAILED)',
+          ) as unknown,
+        }),
+      );
+    });
+
     it('keeps the result unchanged when Teams fails', async () => {
       fravegaRepository.listFullOrders.mockResolvedValue(page([fullOrder()]));
       notInMadre();
@@ -570,6 +625,24 @@ describe('DispatchOrders', () => {
         persistence_status: 'PENDING',
         last_error: null,
       });
+      // La orden que no habia entrado se avisa en Teams al entrar
+      expect(teamsRepository.notifyOrder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderId: '19836023',
+          estado: 'PENDING',
+        }),
+      );
+    });
+
+    it('does not notify Teams when the retry cannot read Fravega again', async () => {
+      persistenceRepository.findByUniqueKey.mockResolvedValue(
+        persisted('FAILED'),
+      );
+      fravegaRepository.getFullOrder.mockRejectedValue(new Error('500'));
+
+      await orchestrator.retry('fravega:v93713051frvg-01');
+
+      expect(teamsRepository.notifyOrder).not.toHaveBeenCalled();
     });
 
     it('recovers an order VBI already had: duplicate leaves it PENDING with the TLQV number', async () => {

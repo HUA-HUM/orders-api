@@ -79,4 +79,34 @@ describe('fravegaFullOrderToNormalized', () => {
     expect(order.items).toEqual([]);
     expect(order.amount).toBeNull();
   });
+
+  it('has no warnings for a complete order', () => {
+    const order = fravegaFullOrderToNormalized({
+      orderId: 1,
+      suborderId: 'v1frvg-01',
+      source: 'complete',
+      missing: [],
+    });
+
+    expect(order.warnings).toEqual([]);
+  });
+
+  it('warns when marketplace-api built the order without the Seller Central detail', () => {
+    const order = fravegaFullOrderToNormalized({
+      orderId: 20277852,
+      suborderId: 'v95020273frvg-01',
+      source: 'fallback',
+      missing: ['email'],
+      fallbackReason: '[FRAVEGA GET] /api/v1/orders/v95020273frvg-01 → 500',
+      buyer: { cuil: '27301234567', email: null },
+    });
+
+    expect(order.customer).toMatchObject({
+      document: '27301234567',
+      email: null,
+    });
+    expect(order.warnings).toEqual([
+      'Seller Central no devolvio el detalle de la orden ([FRAVEGA GET] /api/v1/orders/v95020273frvg-01 → 500): se armo con el listado + VTEX, sin email',
+    ]);
+  });
 });
