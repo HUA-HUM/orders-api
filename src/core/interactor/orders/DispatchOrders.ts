@@ -215,11 +215,15 @@ export class DispatchOrders {
           estimated_delivery_date: order.shipping.estimatedDeliveryDate,
         },
         result,
+        order,
       );
     });
   }
 
-  /* Guarda el resultado del reintento sobre la orden que ya esta en madre */
+  /**
+   * Guarda el resultado del reintento sobre la orden que ya esta en madre.
+   * Con `notifyOrder` avisa a Teams como una orden nueva: la que no habia entrado avisa que entro.
+   */
   private async updateEvaluated(
     id: number,
     uniqueKey: string,
@@ -227,6 +231,7 @@ export class DispatchOrders {
     evaluation: DispatchEvaluation,
     refresh: UpdateOrderStatusRequest,
     result: DispatchRunResult,
+    notifyOrder?: NormalizedOrder,
   ): Promise<DispatchRetryResult> {
     try {
       await this.ordersPersistenceRepository.updateStatus(id, {
@@ -241,6 +246,9 @@ export class DispatchOrders {
     }
 
     this.tally(evaluation, orderId, result);
+    if (notifyOrder) {
+      await this.notifyTeams(notifyOrder, evaluation);
+    }
     return {
       uniqueKey,
       persistence_status: evaluation.fields.persistence_status,

@@ -52,6 +52,20 @@ export function fravegaFullOrderToNormalized(
       name: trimOrNull(item.name),
       quantity: typeof item.quantity === 'number' ? item.quantity : null,
     })),
+    warnings: fallbackWarnings(order),
     raw: order,
   };
+}
+
+/* Si marketplace-api la armo sin el detalle de Seller Central, se avisa que datos faltan */
+function fallbackWarnings(order: FravegaFullOrderResponse): string[] {
+  if (order.source !== 'fallback') {
+    return [];
+  }
+
+  const missing = order.missing?.length ? order.missing.join(', ') : 'email';
+  const reason = order.fallbackReason ? ` (${order.fallbackReason})` : '';
+  return [
+    `Seller Central no devolvio el detalle de la orden${reason}: se armo con el listado + VTEX, sin ${missing}`,
+  ];
 }
